@@ -2,8 +2,9 @@
 """GraphLab Plotter — портативное GUI-приложение.
 
 Выбор .dat файлов (X и Y) из проводника, настройка имён осей, цветов
-линий и подписей легенды, построение графиков (отдельные или все на
-одном), сохранение PNG и готовых строк для Markdown.
+линий, подписей легенды и строк начала чтения Y для каждой линии,
+построение графиков (отдельные или все на одном), сохранение PNG и
+готовых строк для Markdown. Предпросмотр — с прокруткой ползунками.
 
 Запуск: GraphLab.exe (или python graphlab_app.py с matplotlib+Pillow).
 """
@@ -59,18 +60,19 @@ def safe_name(name: str) -> str:
 
 
 class YLine:
-    """Одна линия графика: файл .dat, цвет, подпись легенды."""
+    """Одна линия графика: файл .dat, цвет, подпись легенды, строка начала Y."""
 
     def __init__(self, master, app, index):
         self.app = app
         self.path_var = tk.StringVar()
         self.legend_var = tk.StringVar(value=f"линия {index + 1}")
+        self.start_var = tk.IntVar(value=4)
         self.color = PALETTE[index % len(PALETTE)]
 
         self.frame = tk.Frame(master)
         self.frame.pack(fill=tk.X, pady=2)
 
-        self.file_entry = tk.Entry(self.frame, textvariable=self.path_var, width=36)
+        self.file_entry = tk.Entry(self.frame, textvariable=self.path_var, width=30)
         self.file_entry.pack(side=tk.LEFT)
         tk.Button(self.frame, text="...", width=3, command=self._pick_file).pack(
             side=tk.LEFT, padx=3)
@@ -80,8 +82,13 @@ class YLine:
                                    command=self._pick_color)
         self.color_btn.pack(side=tk.LEFT, padx=3)
 
-        self.legend_entry = tk.Entry(self.frame, textvariable=self.legend_var, width=16)
+        self.legend_entry = tk.Entry(self.frame, textvariable=self.legend_var, width=14)
         self.legend_entry.pack(side=tk.LEFT, padx=3)
+
+        # строка начала чтения Y для этой линии
+        tk.Label(self.frame, text="Y с:").pack(side=tk.LEFT, padx=(8, 2))
+        self.start_entry = tk.Entry(self.frame, textvariable=self.start_var, width=4)
+        self.start_entry.pack(side=tk.LEFT, padx=(0, 3))
 
         tk.Button(self.frame, text="✕", width=3, command=self._remove).pack(side=tk.RIGHT)
 
@@ -118,23 +125,31 @@ class YLine:
         label = self.legend_var.get().strip()
         return label if label else Path(self.path).stem
 
+    @property
+    def start_line(self):
+        try:
+            return max(1, int(self.start_var.get()))
+        except (tk.TclError, ValueError):
+            return 4
+
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("GraphLab Plotter")
-        self.root.minsize(840, 720)
+        self.root.minsize(860, 720)
 
         self.x_file = tk.StringVar()
-        self.start_line = tk.IntVar(value=4)
         self.title_var = tk.StringVar(value="График")
         self.xlabel_var = tk.StringVar(value="X")
         self.ylabel_var = tk.StringVar(value="Y")
         self.out_dir = tk.StringVar(value=app_dir())
         self.combined = tk.BooleanVar(value=False)
         self.combined_name = tk.StringVar(value="combined")
+        self.fit_preview = tk.BooleanVar(value=False)
         self.lines = []
-        self._photo = None  # удерживаем ссылку на картинку предпросмотра
+        self._photo = None       # текущий PhotoImage (удерживаем ссылку)
+        self._orig_image = None  # исходный PIL-изображение для предпросмотра
 
         self._build_ui()
         self.add_line()
@@ -156,7 +171,7 @@ class App:
         lines_box.pack(fill=tk.X, **pad)
         head = tk.Frame(lines_box)
         head.pack(fill=tk.X)
-        tk.Label(head, text="Линии Y (файл / цвет / подпись легенды):").pack(side=tk.LEFT)
+        tk.Label(head, text="Линии Y (файл / цвет / подпись легенды / строка начала Y):").pack(side=tk.LEFT)
         self.lines_frame = tk.Frame(lines_box)
         self.lines_frame.pack(fill=tk.X)
 
@@ -174,14 +189,12 @@ class App:
         # параметры
         opts = tk.Frame(self.root)
         opts.pack(fill=tk.X, **pad)
-        tk.Label(opts, text="Строка начала Y:").grid(row=0, column=0, sticky="e", padx=(0, 6))
-        tk.Entry(opts, textvariable=self.start_line, width=6).grid(row=0, column=1, sticky="w")
-        tk.Label(opts, text="Название графика:").grid(row=1, column=0, sticky="e", padx=(0, 6), pady=4)
-        tk.Entry(opts, textvariable=self.title_var, width=30).grid(row=1, column=1, sticky="ew", pady=4)
-        tk.Label(opts, text="Ось X:").grid(row=2, column=0, sticky="e", padx=(0, 6), pady=4)
-        tk.Entry(opts, textvariable=self.xlabel_var, width=30).grid(row=2, column=1, sticky="ew", pady=4)
-        tk.Label(opts, text="Ось Y:").grid(row=3, column=0, sticky="e", padx=(0, 6), pady=4)
-        tk.Entry(opts, textvariable=self.ylabel_var, width=30).grid(row=3, column=1, sticky="ew", pady=4)
+        tk.Label(opts, text="Название графика:").grid(row=0, column=0, sticky="e", padx=(0, 6), pady=4)
+        tk.Entry(opts, textvariable=self.title_var, width=30).grid(row=0, column=1, sticky="ew", pady=4)
+        tk.Label(opts, text="Ось X:").grid(row=1, column=0, sticky="e", padx=(0, 6), pady=4)
+        tk.Entry(opts, textvariable=self.xlabel_var, width=30).grid(row=1, column=1, sticky="ew", pady=4)
+        tk.Label(opts, text="Ось Y:").grid(row=2, column=0, sticky="e", padx=(0, 6), pady=4)
+        tk.Entry(opts, textvariable=self.ylabel_var, width=30).grid(row=2, column=1, sticky="ew", pady=4)
         opts.columnconfigure(1, weight=1)
 
         # папка вывода
@@ -199,12 +212,25 @@ class App:
         self.status = tk.Label(btns, text="", foreground="gray")
         self.status.pack(side=tk.LEFT, padx=12)
 
-        # предпросмотр
+        # предпросмотр с ползунками
         prev = tk.Frame(self.root)
         prev.pack(fill=tk.BOTH, expand=True, **pad)
+        prev.grid_columnconfigure(0, weight=1)
+        prev.grid_rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(prev, bg="#f5f5f5", highlightthickness=0)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas.bind("<Configure>", lambda e: self._fit_preview())
+        self.vbar = tk.Scrollbar(prev, orient="vertical", command=self.canvas.yview)
+        self.hbar = tk.Scrollbar(prev, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
+        self.canvas.bind("<Configure>", lambda e: self._update_preview())
+
+        prev_ctrl = tk.Frame(self.root)
+        prev_ctrl.pack(fill=tk.X, padx=8)
+        tk.Checkbutton(prev_ctrl, text="Вписывать в окно (без прокрутки)",
+                       variable=self.fit_preview,
+                       command=self._update_preview).pack(side=tk.LEFT)
 
         # markdown
         md = tk.Frame(self.root)
@@ -243,11 +269,6 @@ class App:
         if not rows:
             messagebox.showerror("Ошибка", "Добавьте хотя бы одну линию с .dat файлом Y.")
             return
-        try:
-            start_line = int(self.start_line.get())
-        except ValueError:
-            messagebox.showerror("Ошибка", "«Строка начала Y» должна быть числом.")
-            return
 
         out_dir = self.out_dir.get().strip() or app_dir()
         os.makedirs(out_dir, exist_ok=True)
@@ -273,7 +294,7 @@ class App:
             ax = fig.add_subplot(111)
             plotted = 0
             for ln in rows:
-                y = read_numbers(ln.path, start_line=start_line)
+                y = read_numbers(ln.path, start_line=ln.start_line)
                 n = min(len(x), len(y))
                 if n == 0:
                     self.status.configure(text=f"Нет точек в {ln.path}", foreground="red")
@@ -303,7 +324,7 @@ class App:
                 png_name = f"{stem}.png"
                 png_path = os.path.join(out_dir, png_name)
 
-                y = read_numbers(ln.path, start_line=start_line)
+                y = read_numbers(ln.path, start_line=ln.start_line)
                 n = min(len(x), len(y))
                 if n == 0:
                     self.status.configure(text=f"Нет точек в {ln.path}", foreground="red")
@@ -339,27 +360,26 @@ class App:
             f"Создано графиков: {len(md_lines)}\nПапка: {out_dir}\n\n"
             "Строки для Markdown в поле ниже.")
 
-    # ---------- предпросмотр и прочее ----------
+    # ---------- предпросмотр ----------
     def _show_preview(self, png_path: str):
-        img = Image.open(png_path)
+        self._orig_image = Image.open(png_path)
+        self._update_preview()
+
+    def _update_preview(self):
+        if self._orig_image is None:
+            return
+        img = self._orig_image
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if self.fit_preview.get() and w > 50 and h > 50:
+            scale = min(w / img.width, h / img.height)
+            if scale < 1.0:
+                img = img.resize((max(1, int(img.width * scale)),
+                                  max(1, int(img.height * scale))))
         self._photo = ImageTk.PhotoImage(img)
         self.canvas.delete("all")
         self.canvas.create_image(10, 10, anchor="nw", image=self._photo)
-
-    def _fit_preview(self):
-        if self._photo is None:
-            return
-        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        if w < 50 or h < 50:
-            return
-        img = self._photo.image
-        scale = min(w / img.width, h / img.height)
-        if scale >= 1.0:
-            return
-        resized = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))))
-        self._photo = ImageTk.PhotoImage(resized)
-        self.canvas.delete("all")
-        self.canvas.create_image(10, 10, anchor="nw", image=self._photo)
+        if not self.fit_preview.get():
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _copy_md(self):
         self.root.clipboard_clear()
