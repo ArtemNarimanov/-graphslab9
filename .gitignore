@@ -3,3 +3,7 @@ env/
 __pycache__/
 *.pyc
 *.exe
+
+# Артефакты сборки PyInstaller
+dist/
+build/

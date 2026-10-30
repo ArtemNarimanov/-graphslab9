@@ -4,10 +4,11 @@
 портативное GUI-приложение и CLI-скрипт. На выходе — готовые PNG и строки
 для вставки в Markdown.
 
-## Портативное приложение (v1.0.1)
+## Портативное приложение (v1.0.2)
 
-`GraphLab.exe` — однофайловое Windows-приложение, установка не нужна:
-просто запустить двойным кликом.
+`dist\GraphLab\` — портативная папка (onedir-сборка PyInstaller):
+запустить `dist\GraphLab\GraphLab.exe` двойным кликом, установка не нужна.
+Временные папки при запуске не создаются вообще.
 
 Возможности:
 
@@ -28,12 +29,15 @@
 ![TAV](result_tav.png)
 ```
 
-Сборка из исходника (`graphlab_app.py`):
+Сборка из исходника (`graphlab_app.py`) — onedir, спецификация
+`GraphLab_onedir.spec`:
 
 ```
-pip install matplotlib pillow pyinstaller
-pyinstaller --onefile --windowed --name GraphLab graphlab_app.py
+env\Scripts\pyinstaller.exe GraphLab_onedir.spec --noconfirm
 ```
+
+Результат — папка `dist\GraphLab\` (`GraphLab.exe` + `_internal\`), её и
+раздавать/запускать. Временные папки при запуске не создаются.
 
 ## CLI-скрипт
 
