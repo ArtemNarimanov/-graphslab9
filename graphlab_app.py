@@ -14,6 +14,7 @@
 Запуск: GraphLab.exe (или python graphlab_app.py с matplotlib+Pillow).
 """
 
+import ctypes
 import io
 import json
 import os
@@ -294,18 +295,10 @@ class App:
         menubar.add_cascade(label="Правка", menu=edit_menu)
         root.config(menu=menubar)
 
-        # ускорители Ctrl+X/C/V/A — генерируют виртуальные события на виджете с фокусом
-        for key, ev in [("x", "<<Cut>>"), ("c", "<<Copy>>"),
-                        ("v", "<<Paste>>"), ("a", "<<SelectAll>>")]:
-            root.bind_all(f"<Control-KeyPress-{key}>",
-                          lambda e, ev=ev: self._focus_event(ev))
-
-        # ускорители меню «Файл»
-        root.bind_all("<Control-KeyPress-n>", lambda e: self._menu_new_project())
-        root.bind_all("<Control-KeyPress-o>", lambda e: self._menu_open_project())
-        root.bind_all("<Control-KeyPress-s>", lambda e: self._menu_save_project())
-        root.bind_all("<Control-Shift-KeyPress-S>",
-                      lambda e: self._menu_save_project_as())
+        # ускорители Ctrl+X/C/V/A и меню «Файл».
+        # Раскладка-независимо: одна привязка <Control-KeyPress>,
+        # диспетчеризация по keysym внутри _ctrl_key (англ. + ЙЦУКЕН).
+        root.bind_all("<Control-KeyPress>", self._ctrl_key)
 
         # контекстное меню по ПКМ для всех Entry/Text
         self.ctx_menu = tk.Menu(root, tearoff=0)
@@ -318,6 +311,84 @@ class App:
         w = self.root.focus_get()
         if w is not None:
             w.event_generate(ev)
+
+    # keysym → действие. Команды меню — callable; редактор — виртуальные
+    # события, генерируемые на виджете с фокусом. Англ. + ЙЦУКЕН.
+    _HOTKEYS = {
+        "n": "new", "т": "new",
+        "o": "open", "щ": "open",
+        "s": "save", "ы": "save",
+        "x": "<<Cut>>", "ч": "<<Cut>>",
+        "c": "<<Copy>>", "с": "<<Copy>>",
+        "v": "<<Paste>>", "м": "<<Paste>>",
+        "a": "<<SelectAll>>", "ф": "<<SelectAll>>",
+    }
+    _HOTKEYS_SHIFT = {"S": "saveas", "Ы": "saveas"}
+
+    # Fallback по физическим кодам клавиш (VK) — раскладка-независим: одна и
+    # та же физическая клавиша в любой раскладке. Используется, когда Tk не
+    # перевёл символ в keysym (keysym == "??", например русская раскладка
+    # внутри замороженного exe).
+    _VK_HOTKEYS = {
+        0x4E: "new",             # N / Т
+        0x4F: "open",            # O / Щ
+        0x53: "save",            # S / Ы (с Shift -> saveas)
+        0x58: "<<Cut>>",         # X / Ч
+        0x43: "<<Copy>>",        # C / С
+        0x56: "<<Paste>>",       # V / М
+        0x41: "<<SelectAll>>",   # A / Ф
+    }
+
+    def _vk_action(self, shift):
+        """Действие по нажатой Ctrl+букве через физический код клавиши (VK)."""
+        try:
+            user32 = ctypes.windll.user32
+        except (AttributeError, OSError):
+            return None
+        for vk, action in self._VK_HOTKEYS.items():
+            if user32.GetAsyncKeyState(vk) & 0x8000:
+                if shift and action == "save":
+                    return "saveas"
+                return action
+        return None
+
+    def _ctrl_key(self, e):
+        """Ctrl-ускорители (раскладка-независимо): диспетчеризация по keysym
+        с fallback на физические коды клавиш (VK)."""
+        ks = e.keysym
+        if not (e.state & 4):          # бит Control
+            return
+        shift = bool(e.state & 1)
+        action = None
+        if isinstance(ks, str) and len(ks) == 1:
+            table = self._HOTKEYS_SHIFT if shift else self._HOTKEYS
+            action = table.get(ks)
+        elif isinstance(ks, str) and ks.startswith("U") and len(ks) == 5:
+            # Tk может сообщать Unicode-символ как "U0442" (нет keysym'а)
+            try:
+                ch = chr(int(ks[1:], 16))
+            except ValueError:
+                ch = None
+            if ch is not None:
+                table = self._HOTKEYS_SHIFT if shift else self._HOTKEYS
+                action = table.get(ch)
+        if action is None:
+            # keysym == "??": Tk не смог перевести символ (русская раскладка
+            # внутри exe). Fallback на физические коды — они одинаковы в
+            # любой раскладке.
+            action = self._vk_action(shift)
+        if action is None:
+            return
+        if action == "new":
+            self._menu_new_project()
+        elif action == "open":
+            self._menu_open_project()
+        elif action == "save":
+            self._menu_save_project()
+        elif action == "saveas":
+            self._menu_save_project_as()
+        else:                          # виртуальное событие на фокусе
+            self._focus_event(action)
 
     def _ctx_event(self, ev):
         if self._ctx_target is not None:
@@ -479,8 +550,9 @@ class App:
 
     # ---------- действия ----------
     def add_line(self):
+        idx = self._line_counter
         self._line_counter += 1
-        self.lines.append(YLine(self.lines_frame, self, self._line_counter))
+        self.lines.append(YLine(self.lines_frame, self, idx))
         self._mark_dirty()
 
     def _toggle_combined(self):
@@ -530,6 +602,7 @@ class App:
         """
         warnings = []
         prepared = []
+        read_errors = []
         for ln in self.lines:
             legend = ln.legend_var.get()
             start = self._to_int(ln.start_var.get(), None)
@@ -548,15 +621,23 @@ class App:
             if not x_text:
                 warnings.append(f"«{legend}»: не указан X — пропущена")
                 continue
-            xs = read_numbers(x_text, start_line=x_start) if os.path.isfile(x_text) \
-                else parse_numbers(x_text)
+            try:
+                xs = read_numbers(x_text, start_line=x_start) if os.path.isfile(x_text) \
+                    else parse_numbers(x_text)
+            except (OSError, UnicodeDecodeError) as e:
+                read_errors.append(f"{x_text}: {e}")
+                continue
 
             y_text = ln.path_var.get().strip()
             if not y_text:
                 warnings.append(f"«{legend}»: не указан Y — пропущена")
                 continue
-            ys = read_numbers(y_text, start_line=start) if os.path.isfile(y_text) \
-                else parse_numbers(y_text)
+            try:
+                ys = read_numbers(y_text, start_line=start) if os.path.isfile(y_text) \
+                    else parse_numbers(y_text)
+            except (OSError, UnicodeDecodeError) as e:
+                read_errors.append(f"{y_text}: {e}")
+                continue
 
             n = min(len(xs), len(ys))
             if n == 0:
@@ -566,6 +647,10 @@ class App:
                 warnings.append(f"«{legend}»: X={len(xs)}, Y={len(ys)} — беру {n}")
             prepared.append((xs[:n], ys[:n], ln.color, legend))
 
+        if read_errors:
+            messagebox.showerror(
+                "Ошибка чтения",
+                "Не удалось прочитать файлы:\n" + "\n".join(read_errors))
         if not prepared:
             messagebox.showerror("Ошибка", "Нет данных: укажите файлы или числа X и Y.")
             return None
@@ -900,12 +985,13 @@ class App:
         self._line_counter = 0
 
         for item in data.get("lines", []):
+            idx = self._line_counter
             self._line_counter += 1
-            ln = YLine(self.lines_frame, self, self._line_counter)
+            ln = YLine(self.lines_frame, self, idx)
             ln.path_var.set(resolve(item.get("path", "")))
-            ln.legend_var.set(item.get("legend", f"линия {self._line_counter}"))
+            ln.legend_var.set(item.get("legend", f"линия {idx + 1}"))
             ln.start_var.set(self._to_int(item.get("start", 4), 4))
-            ln.color = item.get("color") or PALETTE[self._line_counter % len(PALETTE)]
+            ln.color = item.get("color") or PALETTE[idx % len(PALETTE)]
             ln.color_btn.configure(bg=ln.color, fg=ln.color)
             ln.x_path_var.set(resolve(item.get("x_path", "")))
             ln.x_start_var.set(self._to_int(item.get("x_start", 1), 1))
@@ -1024,6 +1110,7 @@ class App:
             return False
         self.project_path = os.path.abspath(path)
         self._clear_dirty()
+        self._update_title()
         self._set_status(f"Проект сохранён: {path}", "ok")
         return True
 
@@ -1038,6 +1125,7 @@ class App:
         if self.load_project(path):
             self.project_path = os.path.abspath(path)
             self._clear_dirty()
+            self._update_title()
 
 
 def main():
