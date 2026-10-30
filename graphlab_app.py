@@ -5,12 +5,16 @@
 подписей легенды и строк начала чтения для каждой линии (у линии может быть
 свой X), построение графиков (отдельные или все на одном), сохранение PNG и
 готовых строк для Markdown. Числа можно вставить прямо в поле без .dat.
-Проекты .gslab с автосохранением, предпросмотр вкладками.
+Предпросмотр строится в памяти — файлы на диск не пишутся; экспорт в PNG —
+отдельная кнопка. Проекты .gslab: «Новый проект / Открыть / Сохранить /
+Сохранить как…», заголовок со звёздочкой при несохранённых изменениях,
+автосохранение при выходе, предпросмотр вкладками.
 
 Интерфейс: плоский современный дизайн (карточки, шрифт Segoe UI), светлая тема.
 Запуск: GraphLab.exe (или python graphlab_app.py с matplotlib+Pillow).
 """
 
+import io
 import json
 import os
 import re
@@ -111,6 +115,11 @@ class YLine:
         self.x_start_var = tk.StringVar(value="1")
         self.color = PALETTE[index % len(PALETTE)]
 
+        # любое пользовательское изменение поля — проект «испорчен»
+        for var in (self.path_var, self.legend_var, self.start_var,
+                    self.x_path_var, self.x_start_var):
+            var.trace_add("write", lambda *a: app._mark_dirty())
+
         T = app.T
         self.frame = tk.Frame(master, bg=T["card"])
         self.frame.pack(fill=tk.X, pady=3)
@@ -181,16 +190,17 @@ class YLine:
         if color:
             self.color = color
             self.color_btn.configure(bg=color, fg=color)
+            self.app._mark_dirty()
 
     def _remove(self):
         self.frame.destroy()
         self.app.lines.remove(self)
+        self.app._mark_dirty()
 
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("GraphLab Plotter")
         root.geometry("1160x760")
         root.minsize(1024, 680)
 
@@ -198,6 +208,11 @@ class App:
         self._status_kind = "info"
         self._ctx_target = None
         self.ctx_menu = None
+
+        # состояние проекта: None — «Новый проект», _dirty — есть несохранённые
+        self.project_path = None
+        self._dirty = False
+        self._loading = False
 
         self.x_file = tk.StringVar()
         self.title_var = tk.StringVar(value="График")
@@ -207,6 +222,12 @@ class App:
         self.combined = tk.BooleanVar(value=False)
         self.combined_name = tk.StringVar(value="combined")
         self.fit_preview = tk.BooleanVar(value=False)
+        # любое пользовательское изменение поля — проект «испорчен»
+        for var in (self.x_file, self.title_var, self.xlabel_var, self.ylabel_var,
+                    self.out_dir, self.combined_name):
+            var.trace_add("write", lambda *a: self._mark_dirty())
+        self.combined.trace_add("write", lambda *a: self._mark_dirty())
+        self.fit_preview.trace_add("write", lambda *a: self._mark_dirty())
         self.lines = []
         self._line_counter = 0       # индекс палитры (не сбрасывается при удалении)
         self._preview_tabs = []
@@ -251,16 +272,24 @@ class App:
         root = self.root
         menubar = tk.Menu(root)
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Открыть проект…", command=self._menu_open_project)
-        file_menu.add_command(label="Сохранить проект…", command=self._menu_save_project)
+        file_menu.add_command(label="Новый проект", accelerator="Ctrl+N",
+                              command=self._menu_new_project)
+        file_menu.add_command(label="Открыть проект…", accelerator="Ctrl+O",
+                              command=self._menu_open_project)
+        file_menu.add_command(label="Сохранить", accelerator="Ctrl+S",
+                              command=self._menu_save_project)
+        file_menu.add_command(label="Сохранить как…", accelerator="Ctrl+Shift+S",
+                              command=self._menu_save_project_as)
         file_menu.add_separator()
         file_menu.add_command(label="Выйти", command=self._on_close)
         menubar.add_cascade(label="Файл", menu=file_menu)
 
         edit_menu = tk.Menu(menubar, tearoff=0)
-        for label, ev in [("Вырезать", "<<Cut>>"), ("Копировать", "<<Copy>>"),
-                          ("Вставить", "<<Paste>>"), ("Выделить всё", "<<SelectAll>>")]:
-            edit_menu.add_command(label=label,
+        for label, ev, acc in [("Вырезать", "<<Cut>>", "Ctrl+X"),
+                               ("Копировать", "<<Copy>>", "Ctrl+C"),
+                               ("Вставить", "<<Paste>>", "Ctrl+V"),
+                               ("Выделить всё", "<<SelectAll>>", "Ctrl+A")]:
+            edit_menu.add_command(label=label, accelerator=acc,
                                   command=lambda e=ev: self._focus_event(e))
         menubar.add_cascade(label="Правка", menu=edit_menu)
         root.config(menu=menubar)
@@ -270,6 +299,13 @@ class App:
                         ("v", "<<Paste>>"), ("a", "<<SelectAll>>")]:
             root.bind_all(f"<Control-KeyPress-{key}>",
                           lambda e, ev=ev: self._focus_event(ev))
+
+        # ускорители меню «Файл»
+        root.bind_all("<Control-KeyPress-n>", lambda e: self._menu_new_project())
+        root.bind_all("<Control-KeyPress-o>", lambda e: self._menu_open_project())
+        root.bind_all("<Control-KeyPress-s>", lambda e: self._menu_save_project())
+        root.bind_all("<Control-Shift-KeyPress-S>",
+                      lambda e: self._menu_save_project_as())
 
         # контекстное меню по ПКМ для всех Entry/Text
         self.ctx_menu = tk.Menu(root, tearoff=0)
@@ -386,13 +422,22 @@ class App:
         topbar = tk.Frame(right, bg=T["bg"])
         topbar.grid(row=0, column=0, sticky="ew")
         self.topbar = topbar
-        self.gen_btn = tk.Button(topbar, text="  Построить графики  ",
+        self.gen_btn = tk.Button(topbar, text="  Построить график  ",
                                  bg=T["accent"], fg="white",
                                  activebackground=T["accent_hv"],
                                  activeforeground="white", relief=tk.FLAT, bd=0,
-                                 font=F_HEAD, cursor="hand2", command=self.generate)
+                                 font=F_HEAD, cursor="hand2",
+                                  command=self.preview_graph)
         self.gen_btn.pack(side=tk.LEFT, padx=(2, 10), pady=6)
         self._reg(self.gen_btn, "accent_btn")
+        self.export_btn = tk.Button(topbar, text="  Экспорт в PNG  ",
+                                    bg=T["btn_bg"], fg=T["text"],
+                                    activebackground=T["btn_hover"],
+                                    activeforeground=T["text"], relief=tk.FLAT, bd=0,
+                                    font=F_HEAD, cursor="hand2",
+                                    command=self.export_png)
+        self.export_btn.pack(side=tk.LEFT, padx=(0, 10), pady=6)
+        self._reg(self.export_btn, "btn")
         self.status = tk.Label(topbar, text="", bg=T["bg"], fg=T["muted"], font=F_BODY)
         self.status.pack(side=tk.RIGHT, padx=4)
 
@@ -436,6 +481,7 @@ class App:
     def add_line(self):
         self._line_counter += 1
         self.lines.append(YLine(self.lines_frame, self, self._line_counter))
+        self._mark_dirty()
 
     def _toggle_combined(self):
         """Включает/выключает поле имени объединённого графика."""
@@ -464,8 +510,24 @@ class App:
             return default
 
     # ---------- построение графиков ----------
-    def generate(self):
-        """Строит графики, сохраняет PNG и строки Markdown."""
+    @staticmethod
+    def _plural(n, one, few, many):
+        """Русские формы множественного: 1 график, 2 графика, 5 графиков."""
+        n %= 100
+        if 11 <= n <= 14:
+            return many
+        n %= 10
+        if n == 1:
+            return one
+        if 2 <= n <= 4:
+            return few
+        return many
+
+    def _prepare(self):
+        """Валидация и сборка данных (xs, ys, цвет, легенда) + warnings.
+
+        Возвращает (prepared, warnings); None — была ошибка (уже показана).
+        """
         warnings = []
         prepared = []
         for ln in self.lines:
@@ -473,12 +535,12 @@ class App:
             start = self._to_int(ln.start_var.get(), None)
             if start is None:
                 messagebox.showerror("Ошибка", "В поле «Y с:» нужно целое число")
-                return
+                return None
             start = max(1, start)
             x_start = self._to_int(ln.x_start_var.get(), None)
             if x_start is None:
                 messagebox.showerror("Ошибка", "В поле «X с:» нужно целое число")
-                return
+                return None
             x_start = max(1, x_start)
 
             # X для линии: свой (если задан), иначе общий
@@ -506,20 +568,18 @@ class App:
 
         if not prepared:
             messagebox.showerror("Ошибка", "Нет данных: укажите файлы или числа X и Y.")
-            return
+            return None
+        return prepared, warnings
 
-        main_x = self.x_file.get().strip()
-        out_dir = self.out_dir.get().strip()
-        if not out_dir:
-            out_dir = os.path.dirname(main_x) if os.path.isfile(main_x) else app_dir()
-        os.makedirs(out_dir, exist_ok=True)
+    def _build_figs(self, prepared):
+        """Общее построение фигур (объединённый или по линиям).
 
-        md_lines = []
-        png_paths = []
+        Возвращает список (fig, name, caption); name — имя PNG/Markdown.
+        """
         title = self.title_var.get().strip() or "График"
         xlabel = self.xlabel_var.get().strip()
         ylabel = self.ylabel_var.get().strip()
-
+        figs = []
         if self.combined.get():
             fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
             for xs, ys, color, label in prepared:
@@ -529,12 +589,7 @@ class App:
             ax.set_ylabel(ylabel)
             _style_ax(ax)
             fig.tight_layout(pad=0.4)
-            name = safe_name(self.combined_name.get()) + ".png"
-            path = os.path.join(out_dir, name)
-            fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
-            plt.close(fig)
-            md_lines.append(f"![{title}]({name})")
-            png_paths.append(path)
+            figs.append((fig, safe_name(self.combined_name.get()) + ".png", title))
         else:
             for xs, ys, color, label in prepared:
                 fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
@@ -544,39 +599,87 @@ class App:
                 ax.set_ylabel(ylabel)
                 _style_ax(ax)
                 fig.tight_layout(pad=0.4)
-                fname = safe_name(label) + ".png"
-                path = os.path.join(out_dir, fname)
-                fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
-                plt.close(fig)
-                md_lines.append(f"![{label}]({fname})")
-                png_paths.append(path)
+                figs.append((fig, safe_name(label) + ".png", label))
+        return figs
 
+    def _update_md(self, lines):
         self.md_text.delete("1.0", "end")
-        self.md_text.insert("1.0", "\n".join(md_lines))
-        self._show_preview(png_paths)
+        self.md_text.insert("1.0", "\n".join(lines))
+
+    def preview_graph(self):
+        """«Построить график»: предпросмотр в памяти — на диск ничего не пишет."""
+        res = self._prepare()
+        if res is None:
+            return
+        prepared, warnings = res
+        figs = self._build_figs(prepared)
+        images = []
+        md_lines = []
+        for fig, name, caption in figs:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            buf.seek(0)
+            img = Image.open(buf)
+            images.append((name, img))
+            md_lines.append(f"![{caption}]({name})")
+        self._update_md(md_lines)
+        self._show_preview(images)
+        n = len(images)
+        status = (f"Предпросмотр: {n} "
+                  f"{self._plural(n, 'график', 'графика', 'графиков')}, "
+                  f"файлы не записаны")
         if warnings:
-            self._set_status(
-                "⚠ " + "; ".join(warnings) + f"  ·  сохранено {len(md_lines)} PNG в {out_dir}",
-                "err")
+            self._set_status("⚠ " + "; ".join(warnings) + f"  ·  {status}", "err")
         else:
-            self._set_status(f"Сохранено: {len(md_lines)} PNG в {out_dir}", "ok")
+            self._set_status(status, "ok")
+
+    def export_png(self):
+        """«Экспорт в PNG»: записывает файлы в out_dir + тот же предпросмотр."""
+        res = self._prepare()
+        if res is None:
+            return
+        prepared, warnings = res
+        main_x = self.x_file.get().strip()
+        out_dir = self.out_dir.get().strip()
+        if not out_dir:
+            out_dir = os.path.dirname(main_x) if os.path.isfile(main_x) else app_dir()
+        os.makedirs(out_dir, exist_ok=True)
+
+        figs = self._build_figs(prepared)
+        images = []
+        md_lines = []
+        for fig, name, caption in figs:
+            path = os.path.join(out_dir, name)
+            fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
+            plt.close(fig)
+            img = Image.open(path)
+            images.append((name, img))
+            md_lines.append(f"![{caption}]({name})")
+        self._update_md(md_lines)
+        self._show_preview(images)
+        status = f"Экспорт: {len(images)} PNG в {out_dir}"
+        if warnings:
+            self._set_status("⚠ " + "; ".join(warnings) + f"  ·  {status}", "err")
+        else:
+            self._set_status(status, "ok")
 
     # ---------- предпросмотр (вкладки) ----------
-    def _show_preview(self, png_paths):
-        """Вкладка на каждый сохранённый PNG; свой скролл у каждой."""
+    def _clear_preview_tabs(self):
         for t in self._preview_tabs:
             try:
                 t["frame"].destroy()
             except tk.TclError:
                 pass
         self._preview_tabs = []
-        for path in png_paths:
-            if not os.path.isfile(path):
-                continue
-            img = Image.open(path)
+
+    def _show_preview(self, images):
+        """Вкладка на каждое изображение (name, PIL Image); свой скролл у каждой."""
+        self._clear_preview_tabs()
+        for name, img in images:
             orig = img.copy()
             frame = tk.Frame(self.nb, bg=self.T["card"])
-            self.nb.add(frame, text=os.path.basename(path))
+            self.nb.add(frame, text=name)
             canvas = tk.Canvas(frame, bg=self.T["card"], highlightthickness=0)
             vbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
             hbar = ttk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
@@ -630,6 +733,88 @@ class App:
         self._status_kind = kind
         color = {"info": self.T["muted"], "ok": self.T["ok"], "err": self.T["err"]}[kind]
         self.status.configure(text=text, fg=color)
+
+    # ---------- состояние проекта: dirty / заголовок / подтверждение ----------
+    def _mark_dirty(self):
+        if self._loading:
+            return
+        if not self._dirty:
+            self._dirty = True
+            self._update_title()
+
+    def _clear_dirty(self):
+        if self._dirty:
+            self._dirty = False
+            self._update_title()
+
+    def _update_title(self):
+        """«Новый проект» / «имя файла*» — GraphLab; * — есть несохранённое."""
+        if self.project_path:
+            name = os.path.splitext(os.path.basename(self.project_path))[0]
+        else:
+            name = "Новый проект"
+        if self._dirty:
+            name += "*"
+        self.root.title(f"{name} — GraphLab")
+
+    def _confirm_discard(self):
+        """Да/Нет/Отмена перед потерей несохранённых изменений."""
+        if not self._dirty:
+            return True
+        ans = messagebox.askyesnocancel(
+            "Несохранённые изменения",
+            "В проекте есть несохранённые изменения.\n\n"
+            "Сохранить их перед продолжением?")
+        if ans is None:
+            return False
+        if ans:
+            return self._save_current()
+        return True
+
+    def _save_current(self):
+        """Сохраняет в текущий файл (или через «Сохранить как…»). True — успех."""
+        if not self.project_path:
+            return self._menu_save_project_as()
+        try:
+            self.save_project(self.project_path)
+        except OSError as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить проект:\n{e}")
+            return False
+        self._clear_dirty()
+        self._set_status(f"Проект сохранён: {self.project_path}", "ok")
+        return True
+
+    def _menu_new_project(self):
+        """«Новый проект»: сброс к значениям по умолчанию, без файла."""
+        if not self._confirm_discard():
+            return
+        self._loading = True
+        try:
+            for ln in list(self.lines):
+                try:
+                    ln.frame.destroy()
+                except tk.TclError:
+                    pass
+            self.lines.clear()
+            self._line_counter = 0
+            self.x_file.set("")
+            self.title_var.set("График")
+            self.xlabel_var.set("X")
+            self.ylabel_var.set("Y")
+            self.out_dir.set(app_dir())
+            self.combined.set(False)
+            self.combined_name.set("combined")
+            self.fit_preview.set(False)
+            self._toggle_combined()
+            self.md_text.delete("1.0", "end")
+            self._clear_preview_tabs()
+            self.add_line()
+        finally:
+            self._loading = False
+        self.project_path = None
+        self._dirty = False
+        self._update_title()
+        self._set_status("Новый проект", "info")
 
     # ---------- проекты .gslab ----------
     def save_project(self, path):
@@ -687,7 +872,17 @@ class App:
         return True
 
     def load_project_from_dict(self, data, base_dir):
-        """Восстанавливает состояние из словаря проекта (папка — base_dir)."""
+        """Восстанавливает состояние из словаря проекта (папка — base_dir).
+
+        Изменения полей во время загрузки не помечают проект «испорченным».
+        """
+        self._loading = True
+        try:
+            self._load_project_data(data, base_dir)
+        finally:
+            self._loading = False
+
+    def _load_project_data(self, data, base_dir):
         def resolve(p):
             if not p:
                 return ""
@@ -799,22 +994,38 @@ class App:
             except tk.TclError:
                 pass
 
+        # после восстановления — «Новый проект» с данными (без привязки к файлу)
+        self.project_path = None
+        self._dirty = False
+        self._update_title()
+
     def _on_close(self):
+        if not self._confirm_discard():
+            return
         self._autosave()
         self.root.destroy()
 
     # ---------- меню: проекты ----------
     def _menu_save_project(self):
+        """«Сохранить»: в текущий файл, а если его нет — через «Сохранить как…»."""
+        self._save_current()
+
+    def _menu_save_project_as(self):
+        """«Сохранить как…»: выбор .gslab файла и запись туда. True — успех."""
         path = filedialog.asksaveasfilename(
             title="Сохранить проект", defaultextension=".gslab",
             filetypes=[("Проекты GraphLab", "*.gslab")])
         if not path:
-            return
+            return False
         try:
             self.save_project(path)
-            self._set_status(f"Проект сохранён: {path}", "ok")
         except OSError as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить проект:\n{e}")
+            return False
+        self.project_path = os.path.abspath(path)
+        self._clear_dirty()
+        self._set_status(f"Проект сохранён: {path}", "ok")
+        return True
 
     def _menu_open_project(self):
         path = filedialog.askopenfilename(
@@ -822,7 +1033,11 @@ class App:
             filetypes=[("Проекты GraphLab", "*.gslab"), ("Все файлы", "*.*")])
         if not path:
             return
-        self.load_project(path)
+        if not self._confirm_discard():
+            return
+        if self.load_project(path):
+            self.project_path = os.path.abspath(path)
+            self._clear_dirty()
 
 
 def main():
