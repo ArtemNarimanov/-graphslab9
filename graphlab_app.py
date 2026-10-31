@@ -432,14 +432,41 @@ class App:
         root.columnconfigure(1, weight=1)
         root.rowconfigure(0, weight=1)
 
-        # ---------- левая панель: настройки ----------
+        # ---------- левая панель: настройки (прокручиваемая колонка, R6) ----------
         left = tk.Frame(root, bg=T["bg"])
         left.grid(row=0, column=0, sticky="ns", padx=(12, 6), pady=12)
-        left.columnconfigure(0, weight=1)
         self.left = left
 
-        # карточка «Данные» (растягивается по высоте)
-        data = self._card(left, "Данные", row=0, stretch=True)
+        # canvas + вертикальный бегунок: прокручивается вся колонка (R6.1)
+        left_canvas = tk.Canvas(left, bg=T["bg"], highlightthickness=0)
+        left_vbar = ttk.Scrollbar(left, orient="vertical", command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_vbar.set)
+        left_canvas.grid(row=0, column=0, sticky="nsew")
+        left_canvas.grid_columnconfigure(0, weight=1)
+        left_vbar.grid(row=0, column=1, sticky="ns")
+        self.left_canvas = left_canvas
+
+        inner = tk.Frame(left_canvas, bg=T["bg"])
+        win_id = left_canvas.create_window(0, 0, anchor="nw", window=inner)
+
+        # автоизмерение: scrollregion, ширина карточек, автоскрытие бегунка
+        def _left_scroll_state(e):
+            if e.widget is inner:
+                left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            else:  # canvas — карточки на всю ширину панели (R6.2)
+                left_canvas.itemconfigure(win_id, width=e.widget.winfo_width())
+            bbox = left_canvas.bbox("all")
+            content_h = bbox[3] if bbox else 0
+            if content_h <= left_canvas.winfo_height():
+                left_vbar.grid_remove()
+            else:
+                left_vbar.grid(row=0, column=1, sticky="ns")
+
+        inner.bind("<Configure>", _left_scroll_state)
+        left_canvas.bind("<Configure>", _left_scroll_state)
+
+        # карточка «Данные» (естественная высота — R6.3)
+        data = self._card(inner, "Данные", row=0)
         self._field_row(data, "Файл X (ось абсцисс)", self.x_file, row=1,
                         pick_cmd=self._pick_x)
 
@@ -451,7 +478,7 @@ class App:
             row=5, column=0, sticky="w", padx=14, pady=(8, 12))
 
         # карточка «График»
-        graph = self._card(left, "График", row=1)
+        graph = self._card(inner, "График", row=1)
         self._field_row(graph, "Название графика", self.title_var, row=1)
         self._field_row(graph, "Подпись оси X", self.xlabel_var, row=3)
         self._field_row(graph, "Подпись оси Y", self.ylabel_var, row=5)
@@ -474,7 +501,7 @@ class App:
         self.combined_entry.grid(row=0, column=1, sticky="ew")
 
         # карточка «Вывод»
-        out = self._card(left, "Вывод", row=2)
+        out = self._card(inner, "Вывод", row=2)
         self._field_row(out, "Папка для PNG", self.out_dir, row=1,
                         pick_cmd=self._pick_dir)
         self._muted_label(
@@ -531,22 +558,28 @@ class App:
         self.fit_check.grid(row=0, column=0, sticky="w", padx=(6, 0), pady=(2, 8))
         self._reg(self.fit_check, "check")
 
-        # карточка Markdown
-        md = tk.Frame(right, bg=T["card"])
-        md.grid(row=2, column=0, sticky="ew")
-        md.columnconfigure(0, weight=1)
-        self._reg(md, "card")
-        self.md_text = tk.Text(md, height=4, wrap="none", bd=0, bg=T["entry_bg"],
-                              fg=T["text"], insertbackground=T["text"],
-                              font=("Consolas", 9), highlightthickness=1,
-                              highlightbackground=T["border"])
-        self.md_text.grid(row=0, column=0, sticky="ew", padx=(14, 8), pady=(12, 12))
-        self._reg(self.md_text, "field")
-        side = tk.Frame(md, bg=T["card"])
-        side.grid(row=0, column=1, sticky="ns", padx=(0, 10))
+        # карточка «Python-код» (R8: самодостаточный сниппет для Jupyter)
+        code = tk.Frame(right, bg=T["card"])
+        code.grid(row=2, column=0, sticky="ew")
+        code.columnconfigure(0, weight=1)
+        self._reg(code, "card")
+        self.code_text = tk.Text(code, height=9, wrap="none", bd=0, bg=T["entry_bg"],
+                                fg=T["text"], insertbackground=T["text"],
+                                font=("Consolas", 9), highlightthickness=1,
+                                highlightbackground=T["border"], state=tk.DISABLED)
+        self.code_text.grid(row=0, column=0, sticky="ew", padx=(14, 8), pady=(12, 12))
+        self._reg(self.code_text, "field")
+        code_vbar = ttk.Scrollbar(code, orient="vertical", command=self.code_text.yview)
+        self.code_text.configure(yscrollcommand=code_vbar.set)
+        code_vbar.grid(row=0, column=1, sticky="ns", padx=(2, 4), pady=(12, 12))
+        side = tk.Frame(code, bg=T["card"])
+        side.grid(row=0, column=2, sticky="ns", padx=(0, 10))
         self._reg(side, "card")
-        self._btn(side, "Копировать в буфер", self._copy_md).pack(pady=3)
+        self._btn(side, "Скопировать код", self._copy_code).pack(pady=3)
         self._btn(side, "Открыть папку", self._open_outdir).pack(pady=3)
+
+        # колесико мыши: единый центральный обработчик для всех областей (R7.1)
+        root.bind_all("<MouseWheel>", self._on_mousewheel)
 
     # ---------- действия ----------
     def add_line(self):
@@ -687,9 +720,77 @@ class App:
                 figs.append((fig, safe_name(label) + ".png", label))
         return figs
 
-    def _update_md(self, lines):
-        self.md_text.delete("1.0", "end")
-        self.md_text.insert("1.0", "\n".join(lines))
+    # ---------- Python-код (R8) ----------
+    @staticmethod
+    def _py_str(s):
+        """Строковый литерал для сниппета: двойные кавычки с экранированием."""
+        return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    def _build_snippet(self, prepared):
+        """Самодостаточный matplotlib-код, воспроизводящий график.
+
+        Вставляется в Jupyter и выполняется без GraphLab: массивы данных,
+        стиль, сохранение в plots/, plt.show().
+        """
+        title = self.title_var.get().strip() or "График"
+        xlabel = self.xlabel_var.get().strip()
+        ylabel = self.ylabel_var.get().strip()
+        lines = ["import os", "import matplotlib.pyplot as plt", ""]
+        for i, (xs, ys, color, label) in enumerate(prepared, start=1):
+            x_lit = ", ".join(repr(float(v)) for v in xs)
+            y_lit = ", ".join(repr(float(v)) for v in ys)
+            lines.append(f"x{i} = [{x_lit}]")
+            lines.append(f"y{i} = [{y_lit}]")
+        lines.append("")
+
+        def _style():
+            return [
+                'ax.spines["top"].set_visible(False)',
+                'ax.spines["right"].set_visible(False)',
+                'ax.grid(True, linestyle="--", alpha=0.4)',
+                "ax.legend(framealpha=0.9)",
+            ]
+
+        if self.combined.get():
+            lines.append("fig, ax = plt.subplots(figsize=(9, 5), dpi=150)")
+            for i, (_, _, color, label) in enumerate(prepared, start=1):
+                lines.append(f"ax.plot(x{i}, y{i}, color={self._py_str(color)}, "
+                             f"linewidth=2, label={self._py_str(label)})")
+            lines.append(f"ax.set_title({self._py_str(title)})")
+            lines.append(f"ax.set_xlabel({self._py_str(xlabel)})")
+            lines.append(f"ax.set_ylabel({self._py_str(ylabel)})")
+            lines.extend(_style())
+            lines.append("fig.tight_layout(pad=0.4)")
+            lines.append("")
+            lines.append('os.makedirs("plots", exist_ok=True)')
+            name = safe_name(self.combined_name.get()) + ".png"
+            lines.append(f'fig.savefig(os.path.join("plots", {self._py_str(name)}), '
+                         f'dpi=150, bbox_inches="tight")')
+        else:
+            lines.append('os.makedirs("plots", exist_ok=True)')
+            for i, (_, _, color, label) in enumerate(prepared, start=1):
+                sub_title = f"{title} — {label}"
+                lines.append(f"fig{i}, ax = plt.subplots(figsize=(9, 5), dpi=150)")
+                lines.append(f"ax.plot(x{i}, y{i}, color={self._py_str(color)}, "
+                             f"linewidth=2, label={self._py_str(label)})")
+                lines.append(f"ax.set_title({self._py_str(sub_title)})")
+                lines.append(f"ax.set_xlabel({self._py_str(xlabel)})")
+                lines.append(f"ax.set_ylabel({self._py_str(ylabel)})")
+                lines.extend(_style())
+                lines.append(f"fig{i}.tight_layout(pad=0.4)")
+                name = safe_name(label) + ".png"
+                lines.append(f'fig{i}.savefig(os.path.join("plots", {self._py_str(name)}), '
+                             f'dpi=150, bbox_inches="tight")')
+        lines.append("")
+        lines.append("plt.show()")
+        return "\n".join(lines)
+
+    def _update_code(self, text):
+        """Обновляет поле Python-кода (оно только для чтения)."""
+        self.code_text.configure(state=tk.NORMAL)
+        self.code_text.delete("1.0", "end")
+        self.code_text.insert("1.0", text)
+        self.code_text.configure(state=tk.DISABLED)
 
     def preview_graph(self):
         """«Построить график»: предпросмотр в памяти — на диск ничего не пишет."""
@@ -699,16 +800,14 @@ class App:
         prepared, warnings = res
         figs = self._build_figs(prepared)
         images = []
-        md_lines = []
-        for fig, name, caption in figs:
+        for fig, name, _ in figs:
             buf = io.BytesIO()
             fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
             plt.close(fig)
             buf.seek(0)
             img = Image.open(buf)
             images.append((name, img))
-            md_lines.append(f"![{caption}]({name})")
-        self._update_md(md_lines)
+        self._update_code(self._build_snippet(prepared))
         self._show_preview(images)
         n = len(images)
         status = (f"Предпросмотр: {n} "
@@ -733,15 +832,12 @@ class App:
 
         figs = self._build_figs(prepared)
         images = []
-        md_lines = []
-        for fig, name, caption in figs:
+        for fig, name, _ in figs:
             path = os.path.join(out_dir, name)
             fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             img = Image.open(path)
             images.append((name, img))
-            md_lines.append(f"![{caption}]({name})")
-        self._update_md(md_lines)
         self._show_preview(images)
         status = f"Экспорт: {len(images)} PNG в {out_dir}"
         if warnings:
@@ -803,11 +899,52 @@ class App:
         for t in self._preview_tabs:
             self._update_preview_for(t)
 
-    # ---------- Markdown / папка ----------
-    def _copy_md(self):
+    # ---------- колесико мыши (R7) ----------
+    def _on_mousewheel(self, e):
+        """Колесико над панелью данных, вкладками графика и полем Python-кода.
+
+        Область определяется по цепочке master виджета под указателем;
+        обработанное событие возвращает "break". Shift+колесо — горизонтально,
+        только над вкладкой графика (R7.5).
+        """
+        w = self.root.winfo_containing(e.x_root, e.y_root)
+        if w is None:
+            return
+        chain = []
+        cur = w
+        while cur is not None:
+            chain.append(cur)
+            cur = cur.master
+        shift = bool(e.state & 1)
+        target = None
+        if self.left_canvas in chain:
+            if not shift:
+                target = (self.left_canvas, "y")
+        else:
+            for t in self._preview_tabs:
+                if t["canvas"] in chain:
+                    target = (t["canvas"], "x" if shift else "y")
+                    break
+            if target is None and self.code_text in chain:
+                target = (self.code_text, "y")
+        if target is None:
+            return
+        delta = e.delta
+        if delta == 0:
+            return "break"
+        steps = delta // 120 if abs(delta) >= 120 else (1 if delta > 0 else -1)
+        canvas, axis = target
+        if axis == "y":
+            canvas.yview_scroll(steps, "units")
+        else:
+            canvas.xview_scroll(steps, "units")
+        return "break"
+
+    # ---------- код / папка ----------
+    def _copy_code(self):
         self.root.clipboard_clear()
-        self.root.clipboard_append(self.md_text.get("1.0", "end-1c"))
-        self._set_status("Markdown скопирован в буфер обмена", "ok")
+        self.root.clipboard_append(self.code_text.get("1.0", "end-1c"))
+        self._set_status("Код скопирован в буфер обмена", "ok")
 
     def _open_outdir(self):
         d = self.out_dir.get().strip()
@@ -891,7 +1028,7 @@ class App:
             self.combined_name.set("combined")
             self.fit_preview.set(False)
             self._toggle_combined()
-            self.md_text.delete("1.0", "end")
+            self._update_code("")
             self._clear_preview_tabs()
             self.add_line()
         finally:

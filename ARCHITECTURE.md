@@ -1,10 +1,11 @@
 # GraphLab — архитектура приложения
 
 Портативное GUI-приложение + CLI-скрипт для построения графиков по данным
-GraphLab (`.dat`-файлы). Результат — PNG-картинки и готовые строки Markdown
-(`![TAV](result_tav.png)`) для вставки в отчёты.
+GraphLab (`.dat`-файлы). Результат — PNG-картинки; GUI показывает окно
+Python-кода (самодостаточный сниппет matplotlib), CLI печатает строки
+Markdown (`![TAV](result_tav.png)`) для вставки в отчёты.
 
-Версия: v1.0.3. Язык интерфейса: русский. Целевая ОС: Windows.
+Версия: v1.0.4. Язык интерфейса: русский. Целевая ОС: Windows.
 
 ---
 
@@ -12,11 +13,12 @@ GraphLab (`.dat`-файлы). Результат — PNG-картинки и г�
 
 | Путь | Назначение |
 | --- | --- |
-| `graphlab_app.py` (1144 строк) | Основное Tkinter-приложение, один файл: GUI + логика построения + проекты `.gslab` |
+| `graphlab_app.py` (1281 строк) | Основное Tkinter-приложение, один файл: GUI + логика построения + проекты `.gslab` |
 | `graph.py` (106 строк) | CLI с той же логикой чтения `.dat`, без GUI |
 | `GraphLab_onedir.spec` | Спецификация PyInstaller onedir-сборки |
-| `README.md` | Пользовательская документация (v1.0.3) |
+| `README.md` | Пользовательская документация (v1.0.4) |
 | `REVIEW_TZ.md` | Ревью репозитория и ТЗ доработок v1.0.3 (R1–R4) |
+| `REVIEW_TZ_v1.0.4.md` | Ревью и ТЗ доработок v1.0.4 (R6–R8: скролл левой колонки, колесико мыши, окно Python-кода) |
 | `in/*.dat` | Примеры данных: `x.dat`, `result_tav.dat`, `result_tw1.dat`, `result_tw2.dat` |
 | `env/` | venv Python 3.15.1 с matplotlib, numpy, Pillow, PyInstaller (не коммитится; внутри `Lib/site-packages/sitecustomize.py` — обход DACL-ограничения песочницы DSH при `os.mkdir(mode=)`) |
 | `dist/GraphLab/` | Портативная onedir-сборка: `GraphLab.exe` + `_internal\` |
@@ -58,7 +60,7 @@ GraphLab (`.dat`-файлы). Результат — PNG-картинки и г�
 | `_style_ax(ax)` | `graphlab_app.py:98-103` | Единый вид оси: без верхних/правых рамок, лёгкая сетка, легенда |
 
 Поля X/Y принимают **либо путь к `.dat`, либо сырые числа** — код ветвится по
-`os.path.isfile(...)` (см. `_prepare`, `graphlab_app.py:625-637`).
+`os.path.isfile(...)` (см. `_prepare`, `graphlab_app.py:657-673`).
 
 ### 2.2 Класс `YLine` (`graphlab_app.py:106-199`)
 
@@ -85,7 +87,7 @@ UI — карточка-строка: ряд 0 (файл Y + «...» + кноп�
 Все пять переменных подписаны на `trace_add("write") → app._mark_dirty()`
 (`graphlab_app.py:120-122`).
 
-### 2.3 Класс `App` (`graphlab_app.py:202-1129`)
+### 2.3 Класс `App` (`graphlab_app.py:202-1266`)
 
 #### Состояние
 
@@ -97,7 +99,7 @@ UI — карточка-строка: ряд 0 (файл Y + «...» + кноп�
 | `x_file, title_var, xlabel_var, ylabel_var, out_dir, combined_name` | StringVar общего уровня; `out_dir` по умолчанию = `app_dir()` |
 | `combined`, `fit_preview` | BooleanVar: «все на одном графике», «вписать в окно» |
 | `lines` / `_line_counter` | список `YLine`; счётчик индекса палитры (не сбрасывается) |
-| `md_text`, `status`, `nb` | поле Markdown, статус-строка, Notebook предпросмотра |
+| `code_text`, `status`, `nb` | окно Python-кода, статус-строка, Notebook предпросмотра |
 
 #### Фабрики виджетов
 
@@ -127,7 +129,7 @@ Ctrl-ускорители, три уровня диспетчеризации в
 (`graphlab_app.py:310-313`); работает для всех Entry/Text, т.к. Tk на Windows
 нативно эти клавиши не мапит.
 
-#### Раскладка окна (`_build_ui`, `graphlab_app.py:429-549`)
+#### Раскладка окна (`_build_ui`, `graphlab_app.py:429-583`)
 
 ```
 ┌──────────────────────────────┬──────────────────────────────────┐
@@ -139,8 +141,8 @@ Ctrl-ускорители, три уровня диспетчеризации в
 │ │  [легенда]   Y с: [4]   │ │ ├───────────────────────────────────────┤
 │ │  Свой X (необязательно) │ │ │ ☐ Вписывать в окно                    │
 │ │  [X-файл][...] X с: [1] │ │ ├───────────────────────────────────────┤
-│ │ [+ Добавить линию]      │ │ │ Markdown: ![TAV](result_tav.png)     │
-│ └──────────────────────────┘ │ │              [Копировать в буфер]   │
+│ │ [+ Добавить линию]      │ │ │ Python-код (сниппет matplotlib)     │
+│ └──────────────────────────┘ │ │              [Скопировать код]   │
 │ ┌ График ─────────────────┐ │ │              [Открыть папку]        │
 │ │ Название / ось X / ось Y│ │ └───────────────────────────────────────┘
 │ │ ☐ Все линии на одном    │ │
@@ -155,6 +157,11 @@ Ctrl-ускорители, три уровня диспетчеризации в
 Две кнопки вверху справа — центральный разрыв интерфейса (ТЗ R3):
 **«Построить график»** (`preview_graph`) и **«Экспорт в PNG»** (`export_png`).
 
+Левая колонка прокручивается вертикальным скроллбаром (ТЗ R6; авто-скрытие,
+когда содержимое помещается). Колесико мыши крутит окно данных, предпросмотра
+и Python-кода; Shift+колесико — горизонтально вкладку графика (ТЗ R7,
+`_on_mousewheel`).
+
 ### 2.4 Конвейер построения
 
 Общий путь для обеих кнопок:
@@ -167,39 +174,47 @@ flowchart LR
     C -->|Экспорт в PNG| E["savefig → out_dir/*.png"]
     D --> F["_show_preview()<br/>вкладки + PhotoImage"]
     E --> F
-    F --> G["_update_md()<br/>строки ![...](...png)"]
+    D --> G["_update_code()<br/>сниппет _build_snippet()"]
 ```
 
-- **`_prepare()`** (`graphlab_app.py:598-657`) — валидация и сборка.
+- **`_prepare()`** (`graphlab_app.py:631-690`) — валидация и сборка.
   Для каждой линии: целочисленность «Y с:»/«X с:», X = свой или общий,
   чтение файла или `parse_numbers` для сырых чисел, обрезка до
   `n = min(len(xs), len(ys))`. Ошибки чтения — диалог `showerror`;
   пропуски (нет X/Y, нет данных, разная длина) — список `warnings`.
   Возврат: `(prepared, warnings)` или `None` (ошибка показана).
-- **`_build_figs(prepared)`** (`graphlab_app.py:659-688`) — фигуры matplotlib
+- **`_build_figs(prepared)`** (`graphlab_app.py:692-724`) — фигуры matplotlib
   (`figsize=(9,5)`, `dpi=150`): объединённый график с общей легендой
   (имя = `combined_name`) или по одному на линию (имя = легенда,
   заголовок `{title} — {label}`). Возврат: список `(fig, name, caption)`.
-- **`preview_graph()`** (`graphlab_app.py:694-720`) — рендер каждого fig в
+- **`preview_graph()`** (`graphlab_app.py:795-819`) — рендер каждого fig в
   `io.BytesIO` → `Image.open(buf)`; **на диск ничего не пишется**;
-  статус «Предпросмотр: N график(ов), файлы не записаны» (⚠ при warnings).
-- **`export_png()`** (`graphlab_app.py:722-750`) — разрешение `out_dir`:
+  статус «Предпросмотр: N график(ов), файлы не записаны» (⚠ при warnings);
+  окно Python-кода обновляется: `self._update_code(self._build_snippet(prepared))`.
+- **`export_png()`** (`graphlab_app.py:821-848`) — разрешение `out_dir`:
   явная папка → каталог основного X → `app_dir()`; `os.makedirs`;
-  `fig.savefig(path)` на диск; статус «Экспорт: N PNG в …». Markdown и
-  предпросмотр одинаковы для обеих кнопок.
+  `fig.savefig(path)` на диск; статус «Экспорт: N PNG в …». Окно
+  Python-кода при экспорте не меняется (обновляется только по «Построить
+  график»).
+- **`_py_str(s)` / `_build_snippet(prepared)` / `_update_code(text)`**
+  (`graphlab_app.py:725-794`) — генерация самодостаточного Python-сниппета
+  (matplotlib, `repr(float)` для координат, сохранение в `plots/`,
+  `plt.show()`); окно кода — `tk.Text` с state DISABLED, обновление через
+  NORMAL/insert/DISABLED.
 
 ### 2.5 Предпросмотр (вкладки)
 
-`_show_preview(images)` (`graphlab_app.py:761-783`) — вкладка `ttk.Notebook`
+`_show_preview(images)` (`graphlab_app.py:857-880`) — вкладка `ttk.Notebook`
 на каждое изображение; внутри canvas + вертикальный/горизонтальный скроллбары.
 Каждая вкладка хранит `{frame, canvas, orig (PIL), photo}`.
-`_update_preview_for(entry)` (`graphlab_app.py:785-800`) — перерисовка с учётом
+`_update_preview_for(entry)` (`graphlab_app.py:881-897`) — перерисовка с учётом
 «вписать в окно»: масштаб `min((w-20)/W, (h-20)/H, 1.0)`, иначе 1:1 со
 scrollregion. Перерисовка по `<Configure>` и при переключении чекбокса.
+Колесико мыши над вкладкой графика прокручивает её (`_on_mousewheel`, ТЗ R7).
 
 ### 2.6 Проекты `.gslab` и dirty-состояние
 
-**Формат** — JSON v1 (`save_project`, `graphlab_app.py:905-944`):
+**Формат** — JSON v1 (`save_project`, `graphlab_app.py:1042-1081`):
 
 ```json
 {
@@ -217,29 +232,29 @@ scrollregion. Перерисовка по `<Configure>` и при переклю
 ```
 
 Пути **внутри папки проекта пишутся относительными** (функция `rel`,
-`graphlab_app.py:910-920`), остальные — абсолютными → проект переносим
-вместе с данными. Загрузка: `load_project` (`graphlab_app.py:946-957`) →
-`load_project_from_dict` (`graphlab_app.py:959-968`, suppress dirty через
-`_loading`) → `_load_project_data` (`graphlab_app.py:970-1015`).
-`_project_resolves` (`graphlab_app.py:1017-1038`) — проверка, что файлы
+`graphlab_app.py:1047-1057`), остальные — абсолютными → проект переносим
+вместе с данными. Загрузка: `load_project` (`graphlab_app.py:1083-1095`) →
+`load_project_from_dict` (`graphlab_app.py:1096-1106`, suppress dirty через
+`_loading`) → `_load_project_data` (`graphlab_app.py:1107-1153`).
+`_project_resolves` (`graphlab_app.py:1154-1177`) — проверка, что файлы
 проекта существуют (или поля содержат сырые числа).
 
 **Dirty-трекинг**: любое пользовательское изменение (trace на переменных,
 добавление/удаление линий, выбор цвета) → `_mark_dirty`
-(`graphlab_app.py:823-828`) → звёздочка в заголовке. Заголовок —
-`_update_title` (`graphlab_app.py:835-843`): `Новый проект` / `<имя>*` +
+(`graphlab_app.py:960-966`) → звёздочка в заголовке. Заголовок —
+`_update_title` (`graphlab_app.py:972-981`): `Новый проект` / `<имя>*` +
 « — GraphLab». Подтверждение потери изменений — `_confirm_discard`
-(`graphlab_app.py:845-857`, askyesnocancel: Да = сохранить, Нет = продолжить,
+(`graphlab_app.py:982-995`, askyesnocancel: Да = сохранить, Нет = продолжить,
 Отмена = ничего). Точки входа: «Новый проект» (`_menu_new_project`,
-`graphlab_app.py:872-902`), «Открыть…» (`_menu_open_project`,
-`graphlab_app.py:1117-1128`), закрытие окна (`_on_close`, `graphlab_app.py:1088-1092`).
+`graphlab_app.py:1009-1041`), «Открыть…» (`_menu_open_project`,
+`graphlab_app.py:1254-1266`), закрытие окна (`_on_close`, `graphlab_app.py:1225-1231`).
 
 ### 2.7 Автосохранение и восстановление сессии
 
-- `_autosave()` (`graphlab_app.py:1041-1049`) — при закрытии окна пишет
+- `_autosave()` (`graphlab_app.py:1178-1187`) — при закрытии окна пишет
   `%APPDATA%\GraphLab\config.json` (геометрия) и `last.gslab` (полный проект).
   Ошибки молча игнорируются.
-- `_restore_state()` (`graphlab_app.py:1051-1086`) — при запуске: геометрия из
+- `_restore_state()` (`graphlab_app.py:1188-1224`) — при запуске: геометрия из
   config.json; `last.gslab` загружается **молча, только если пути резолвятся**
   (`_project_resolves`). После восстановления `project_path = None`,
   `_dirty = False` → состояние трактуется как «Новый проект» с данными
@@ -247,7 +262,7 @@ scrollregion. Перерисовка по `<Configure>` и при переклю
 
 ### 2.8 Запуск
 
-`main()` (`graphlab_app.py:1131-1140`): HiDPI-awareness через
+`main()` (`graphlab_app.py:1268-1277`): HiDPI-awareness через
 `ctypes.windll.shcore.SetProcessDpiAwareness(1)`, `tk.Tk()`, `App(root)`,
 `root.mainloop()`. Окно 1160×760, minsize 1024×680.
 
@@ -298,8 +313,8 @@ env\Scripts\pyinstaller.exe GraphLab_onedir.spec --noconfirm
 1. **Один файл GUI**, минимальный стек (tkinter + matplotlib Agg + Pillow) —
    упрощает onedir-сборку и переносимость.
 2. **Предпросмотр и экспорт раздельно** (R3): рендер в `BytesIO` без записи на
-   диск; PNG создаются только по кнопке «Экспорт в PNG». Markdown-строки
-   одинаковы для обоих режимов.
+   диск; PNG создаются только по кнопке «Экспорт в PNG». Окно Python-кода
+   обновляется только при предпросмотре (не при экспорте).
 3. **Портативные проекты `.gslab`**: JSON v1 с относительными путями внутри
    папки проекта — проект переносится вместе с данными; человекочитаемый.
 4. **Раскладка-независимые хоткеи**: keysym-таблицы (англ.+ЙЦУКЕН) + Unicode
