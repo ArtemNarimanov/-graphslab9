@@ -18,7 +18,7 @@
 | `README.md`                                   | Документация v1.0.2: возможности, сборка, формат данных |
 | `GraphLab_onedir.spec`                        | PyInstaller onedir → `dist\GraphLab\` (exe + `_internal`)                                      |
 | `in/{x,result_tav,result_tw1,result_tw2}.dat` | Примеры данных                                                                      |
-| `env/`                                        | venv, Python 3.10.11 (база `C:\Users\anari\AppData\Local\Programs\Python\Python310`)         |
+| `env/`                                        | venv, Python 3.15.1 (база `C:\Users\anari\AppData\Local\Programs\Python\Python315`)         |
 | `dist/`                                       | Артефакты сборки                                                                  |
 
 
