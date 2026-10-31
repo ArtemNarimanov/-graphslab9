@@ -202,8 +202,8 @@ class YLine:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.geometry("1160x760")
-        root.minsize(1024, 680)
+        root.geometry("1280x720")   # по умолчанию 16:9 (TZ fix 3)
+        root.minsize(1024, 576)
 
         self.T = T
         self._status_kind = "info"
@@ -432,17 +432,22 @@ class App:
         root.columnconfigure(1, weight=1)
         root.rowconfigure(0, weight=1)
 
-        # ---------- левая панель: настройки (прокручиваемая колонка, R6) ----------
+        # ---------- левая панель: настройки ----------
         left = tk.Frame(root, bg=T["bg"])
         left.grid(row=0, column=0, sticky="ns", padx=(12, 6), pady=12)
         self.left = left
+        # прокручивается только «Данные»; «График» и «Вывод» статичны (TZ fix 1)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
 
-        # canvas + вертикальный бегунок: прокручивается вся колонка (R6.1)
-        left_canvas = tk.Canvas(left, bg=T["bg"], highlightthickness=0)
-        left_vbar = ttk.Scrollbar(left, orient="vertical", command=left_canvas.yview)
+        # canvas + вертикальный бегунок вокруг карточки «Данные» (R6)
+        data_box = tk.Frame(left, bg=T["bg"])
+        data_box.grid(row=0, column=0, sticky="nsew")
+        data_box.columnconfigure(0, weight=1)
+        left_canvas = tk.Canvas(data_box, bg=T["bg"], highlightthickness=0)
+        left_vbar = ttk.Scrollbar(data_box, orient="vertical", command=left_canvas.yview)
         left_canvas.configure(yscrollcommand=left_vbar.set)
         left_canvas.grid(row=0, column=0, sticky="nsew")
-        left_canvas.grid_columnconfigure(0, weight=1)
         left_vbar.grid(row=0, column=1, sticky="ns")
         self.left_canvas = left_canvas
 
@@ -477,8 +482,8 @@ class App:
         self._btn(data, "+ Добавить линию", self.add_line).grid(
             row=5, column=0, sticky="w", padx=14, pady=(8, 12))
 
-        # карточка «График»
-        graph = self._card(inner, "График", row=1)
+        # карточка «График» (статична, вне прокрутки — TZ fix 1)
+        graph = self._card(left, "График", row=1)
         self._field_row(graph, "Название графика", self.title_var, row=1)
         self._field_row(graph, "Подпись оси X", self.xlabel_var, row=3)
         self._field_row(graph, "Подпись оси Y", self.ylabel_var, row=5)
@@ -500,8 +505,8 @@ class App:
                                           state=tk.DISABLED)
         self.combined_entry.grid(row=0, column=1, sticky="ew")
 
-        # карточка «Вывод»
-        out = self._card(inner, "Вывод", row=2)
+        # карточка «Вывод» (статична, вне прокрутки — TZ fix 1)
+        out = self._card(left, "Вывод", row=2)
         self._field_row(out, "Папка для PNG", self.out_dir, row=1,
                         pick_cmd=self._pick_dir)
         self._muted_label(
@@ -904,7 +909,8 @@ class App:
         """Колесико над панелью данных, вкладками графика и полем Python-кода.
 
         Область определяется по цепочке master виджета под указателем;
-        обработанное событие возвращает "break". Shift+колесо — горизонтально,
+        обработанное событие возвращает "break". Направление: колесо вниз →
+        вниз/вправо, вверх → вверх/влево (TZ fix 2); Shift+колесо — горизонтально
         только над вкладкой графика (R7.5).
         """
         w = self.root.winfo_containing(e.x_root, e.y_root)
@@ -929,10 +935,12 @@ class App:
                 target = (self.code_text, "y")
         if target is None:
             return
+        # «вниз» на Windows даёт delta < 0, поэтому знак инвертируется:
+        # колесо вниз → +1 (вниз/вправо), вверх → -1 (вверх/влево) — TZ fix 2
         delta = e.delta
         if delta == 0:
             return "break"
-        steps = delta // 120 if abs(delta) >= 120 else (1 if delta > 0 else -1)
+        steps = -delta // 120 if abs(delta) >= 120 else (-1 if delta > 0 else 1)
         canvas, axis = target
         if axis == "y":
             canvas.yview_scroll(steps, "units")
