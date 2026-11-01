@@ -202,7 +202,7 @@ class YLine:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.geometry("1280x720")   # по умолчанию 16:9 (TZ fix 3)
+        root.geometry("1600x900")   # по умолчанию 16:9 (R10.1)
         root.minsize(1024, 576)
 
         self.T = T
@@ -222,13 +222,11 @@ class App:
         self.out_dir = tk.StringVar(value=app_dir())
         self.combined = tk.BooleanVar(value=False)
         self.combined_name = tk.StringVar(value="combined")
-        self.fit_preview = tk.BooleanVar(value=False)
         # любое пользовательское изменение поля — проект «испорчен»
         for var in (self.x_file, self.title_var, self.xlabel_var, self.ylabel_var,
                     self.out_dir, self.combined_name):
             var.trace_add("write", lambda *a: self._mark_dirty())
         self.combined.trace_add("write", lambda *a: self._mark_dirty())
-        self.fit_preview.trace_add("write", lambda *a: self._mark_dirty())
         self.lines = []
         self._line_counter = 0       # индекс палитры (не сбрасывается при удалении)
         self._preview_tabs = []
@@ -452,26 +450,31 @@ class App:
         self.left_canvas = left_canvas
 
         inner = tk.Frame(left_canvas, bg=T["bg"])
+        inner.columnconfigure(0, weight=1)   # карточка на всю ширину (R9.1)
         win_id = left_canvas.create_window(0, 0, anchor="nw", window=inner)
 
-        # автоизмерение: scrollregion, ширина карточек, автоскрытие бегунка
+        # автоизмерение: scrollregion, ширина/высота карточки, автоскрытие бегунка
         def _left_scroll_state(e):
             if e.widget is inner:
                 left_canvas.configure(scrollregion=left_canvas.bbox("all"))
-            else:  # canvas — карточки на всю ширину панели (R6.2)
+            else:  # canvas — карточка на всю ширину панели (R6.2)
                 left_canvas.itemconfigure(win_id, width=e.widget.winfo_width())
             bbox = left_canvas.bbox("all")
             content_h = bbox[3] if bbox else 0
-            if content_h <= left_canvas.winfo_height():
+            view_h = left_canvas.winfo_height()
+            if content_h <= view_h:
+                # контент помещается — карточка на всю высоту панели (R9.3)
                 left_vbar.grid_remove()
-            else:
+                left_canvas.itemconfigure(win_id, height=view_h)
+            else:  # переполнение — естественная высота (R9.3)
                 left_vbar.grid(row=0, column=1, sticky="ns")
+                left_canvas.itemconfigure(win_id, height=0)
 
         inner.bind("<Configure>", _left_scroll_state)
         left_canvas.bind("<Configure>", _left_scroll_state)
 
-        # карточка «Данные» (естественная высота — R6.3)
-        data = self._card(inner, "Данные", row=0)
+        # карточка «Данные» (растягивается до низа панели — R9.2)
+        data = self._card(inner, "Данные", row=0, stretch=True)
         self._field_row(data, "Файл X (ось абсцисс)", self.x_file, row=1,
                         pick_cmd=self._pick_x)
 
@@ -552,16 +555,6 @@ class App:
         self._reg(prev, "card")
         self.nb = ttk.Notebook(prev)
         self.nb.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        footer = tk.Frame(prev, bg=T["card"])
-        footer.grid(row=1, column=0, sticky="ew")
-        self._reg(footer, "card")
-        self.fit_check = tk.Checkbutton(
-            footer, text="Вписывать в окно (без прокрутки)",
-            variable=self.fit_preview, command=self._update_all_previews,
-            bg=T["card"], activebackground=T["card"], selectcolor=T["entry_bg"],
-            font=F_SMALL)
-        self.fit_check.grid(row=0, column=0, sticky="w", padx=(6, 0), pady=(2, 8))
-        self._reg(self.fit_check, "check")
 
         # карточка «Python-код» (R8: самодостаточный сниппет для Jupyter)
         code = tk.Frame(right, bg=T["card"])
@@ -860,21 +853,16 @@ class App:
         self._preview_tabs = []
 
     def _show_preview(self, images):
-        """Вкладка на каждое изображение (name, PIL Image); свой скролл у каждой."""
+        """Вкладка на каждое изображение (name, PIL Image); canvas на всю вкладку."""
         self._clear_preview_tabs()
         for name, img in images:
             orig = img.copy()
             frame = tk.Frame(self.nb, bg=self.T["card"])
             self.nb.add(frame, text=name)
             canvas = tk.Canvas(frame, bg=self.T["card"], highlightthickness=0)
-            vbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-            hbar = ttk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
-            canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
             frame.columnconfigure(0, weight=1)
             frame.rowconfigure(0, weight=1)
             canvas.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=(8, 4))
-            vbar.grid(row=0, column=1, sticky="ns", pady=(8, 4), padx=(0, 6))
-            hbar.grid(row=1, column=0, sticky="ew", padx=(8, 4), pady=(0, 6))
             entry = {"frame": frame, "canvas": canvas, "orig": orig, "photo": None}
             canvas.bind("<Configure>", lambda e, t=entry: self._update_preview_for(t))
             self._preview_tabs.append(entry)
@@ -884,11 +872,12 @@ class App:
                 self._update_preview_for(t)
 
     def _update_preview_for(self, entry):
-        """Перерисовывает одну вкладку с учётом «вписать в окно»."""
+        """Перерисовывает одну вкладку: изображение всегда вписано в доступное
+        пространство (cap 1.0 — без апскейла) и центрировано (R10.3)."""
         img = entry["orig"]
         canvas = entry["canvas"]
         w, h = canvas.winfo_width(), canvas.winfo_height()
-        if self.fit_preview.get() and w > 40 and h > 40:
+        if w > 40 and h > 40:
             scale = min((w - 20) / img.width, (h - 20) / img.height, 1.0)
         else:
             scale = 1.0
@@ -896,22 +885,18 @@ class App:
                               max(1, int(img.height * scale))))
         entry["photo"] = ImageTk.PhotoImage(resized)
         canvas.delete("all")
-        canvas.create_image(10, 10, anchor="nw", image=entry["photo"])
-        if not self.fit_preview.get():
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        x = max(10, (w - resized.width) // 2)
+        y = max(10, (h - resized.height) // 2)
+        canvas.create_image(x, y, anchor="nw", image=entry["photo"])
 
-    def _update_all_previews(self):
-        for t in self._preview_tabs:
-            self._update_preview_for(t)
-
-    # ---------- колесико мыши (R7) ----------
+    # ---------- колесико мыши (R7, R10.5) ----------
     def _on_mousewheel(self, e):
-        """Колесико над панелью данных, вкладками графика и полем Python-кода.
+        """Колесико над панелью данных и полем Python-кода.
 
         Область определяется по цепочке master виджета под указателем;
         обработанное событие возвращает "break". Направление: колесо вниз →
-        вниз/вправо, вверх → вверх/влево (TZ fix 2); Shift+колесо — горизонтально
-        только над вкладкой графика (R7.5).
+        вниз, вверх → вверх (TZ fix 2). Над вкладками предпросмотра реакции нет —
+        изображения всегда вписаны (R10.5).
         """
         w = self.root.winfo_containing(e.x_root, e.y_root)
         if w is None:
@@ -921,31 +906,20 @@ class App:
         while cur is not None:
             chain.append(cur)
             cur = cur.master
-        shift = bool(e.state & 1)
         target = None
         if self.left_canvas in chain:
-            if not shift:
-                target = (self.left_canvas, "y")
-        else:
-            for t in self._preview_tabs:
-                if t["canvas"] in chain:
-                    target = (t["canvas"], "x" if shift else "y")
-                    break
-            if target is None and self.code_text in chain:
-                target = (self.code_text, "y")
+            target = self.left_canvas
+        elif self.code_text in chain:
+            target = self.code_text
         if target is None:
             return
         # «вниз» на Windows даёт delta < 0, поэтому знак инвертируется:
-        # колесо вниз → +1 (вниз/вправо), вверх → -1 (вверх/влево) — TZ fix 2
+        # колесо вниз → +1 (вниз), вверх → -1 (вверх) — TZ fix 2
         delta = e.delta
         if delta == 0:
             return "break"
         steps = -delta // 120 if abs(delta) >= 120 else (-1 if delta > 0 else 1)
-        canvas, axis = target
-        if axis == "y":
-            canvas.yview_scroll(steps, "units")
-        else:
-            canvas.xview_scroll(steps, "units")
+        target.yview_scroll(steps, "units")
         return "break"
 
     # ---------- код / папка ----------
@@ -1034,7 +1008,6 @@ class App:
             self.out_dir.set(app_dir())
             self.combined.set(False)
             self.combined_name.set("combined")
-            self.fit_preview.set(False)
             self._toggle_combined()
             self._update_code("")
             self._clear_preview_tabs()
@@ -1082,7 +1055,6 @@ class App:
             "combined": bool(self.combined.get()),
             "combined_name": self.combined_name.get(),
             "out_dir": rel(self.out_dir.get().strip()),
-            "fit_preview": bool(self.fit_preview.get()),
             "geometry": self.root.geometry(),
         }
         with open(path, "w", encoding="utf-8") as f:
@@ -1150,7 +1122,6 @@ class App:
         self.combined_name.set(data.get("combined_name", "combined"))
         od = resolve(data.get("out_dir", ""))
         self.out_dir.set(od or app_dir())
-        self.fit_preview.set(bool(data.get("fit_preview", False)))
         geom = data.get("geometry")
         if geom:
             try:
