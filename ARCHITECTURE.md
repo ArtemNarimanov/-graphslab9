@@ -13,7 +13,7 @@ Markdown (`![TAV](result_tav.png)`) для вставки в отчёты.
 
 | Путь | Назначение |
 | --- | --- |
-| `graphlab_app.py` (1333 строки) | Основное Tkinter-приложение, один файл: GUI + логика построения + проекты `.gslab` |
+| `graphlab_app.py` (1332 строки) | Основное Tkinter-приложение, один файл: GUI + логика построения + проекты `.gslab` |
 | `graph.py` (106 строк) | CLI с той же логикой чтения `.dat`, без GUI |
 | `GraphLab_onedir.spec` | Спецификация PyInstaller onedir-сборки |
 | `README.md` | Пользовательская документация (v1.0.5) |
@@ -88,7 +88,7 @@ UI — карточка-строка: ряд 0 (файл Y + «...» + кноп�
 Все пять переменных подписаны на `trace_add("write") → app._mark_dirty()`
 (`graphlab_app.py:120-122`).
 
-### 2.3 Класс `App` (`graphlab_app.py:204-1317`)
+### 2.3 Класс `App` (`graphlab_app.py:204-1316`)
 
 #### Состояние
 
@@ -163,7 +163,7 @@ Ctrl-ускорители, три уровня диспетчеризации в
 `data_box` двухстрочный: row 0 — постоянная карточка «Данные» (внутри — canvas + vbar), row 1 — постоянная нижняя строка с кнопкой «+ Добавить линию»; кнопка не внутри прокручиваемой области, нижние границы бокса и карточки не двигаются при добавлении/удалении линий и при смене режима скролла (R18.1, R19.4–R19.5).
 Карточки «График» и «Вывод» статичны. Колесико мыши: вниз — вниз, вверх — вверх
 — над панелью данных и Python-кодом (ТЗ R7 + исправление 2, `_on_mousewheel`,
-`graphlab_app.py:965-1002`); над боксом «Данные» прокрутка только при реальном
+`graphlab_app.py:964-1001`); над боксом «Данные» прокрутка только при реальном
 переполнении — страж по высоте `bbox("all")` (R14.4); над вкладками
 предпросмотра реакции нет — изображения всегда вписаны (ТЗ R10.5).
 
@@ -199,28 +199,32 @@ flowchart LR
 - **`_build_figs(prepared)`** (`graphlab_app.py:762-792`) — фигуры matplotlib
   (`figsize=(9,5)`, `dpi=150`): объединённый график с общей легендой
   (имя = `combined_name`) или по одному на линию (имя = легенда,
-  заголовок `{title} — {label}`). Возврат: список `(fig, name, caption)`.
-- **`preview_graph()`** (`graphlab_app.py:865-889`) — рендер каждого fig в
+  заголовок = `title` без приписки подписи линии, ТЗ R20). Возврат: список `(fig, name, caption)`.
+- **`preview_graph()`** (`graphlab_app.py:864-888`) — рендер каждого fig в
   `io.BytesIO` → `Image.open(buf)`; **на диск ничего не пишется**;
   статус «Предпросмотр: N график(ов), файлы не записаны» (⚠ при warnings);
   окно Python-кода обновляется: `self._update_code(self._build_snippet(prepared))`.
-- **`export_png()`** (`graphlab_app.py:891-916`) — разрешение `out_dir`:
+- **`export_png()`** (`graphlab_app.py:890-915`) — разрешение `out_dir`:
   явная папка → каталог основного X → `app_dir()`; `os.makedirs`;
   `fig.savefig(path)` на диск; статус «Экспорт: N PNG в …». Окно
   Python-кода при экспорте не меняется (обновляется только по «Построить
   график»).
 - **`_py_str(s)` / `_build_snippet(prepared)` / `_update_code(text)`**
-  (`graphlab_app.py:795-863`) — генерация самодостаточного Python-сниппета
+  (`graphlab_app.py:795-862`) — генерация самодостаточного Python-сниппета
   (matplotlib, `repr(float)` для координат, сохранение в `plots/`,
   `plt.show()`); окно кода — `tk.Text` с state DISABLED, обновление через
   NORMAL/insert/DISABLED.
 
 ### 2.5 Предпросмотр (вкладки)
 
-`_show_preview(images)` (`graphlab_app.py:927-944`) — вкладка `ttk.Notebook`
+Заголовок отдельного графика (режим «по линиям») = значение `title_var`
+без конкатенации с подписью линии (ТЗ R20); подпись линии отображается
+только в легенде (`ax.legend()`).
+
+`_show_preview(images)` (`graphlab_app.py:926-943`) — вкладка `ttk.Notebook`
 на каждое изображение; canvas на всю вкладку, без скроллбаров (ТЗ R10.4).
 Каждая вкладка хранит `{frame, canvas, orig (PIL), photo}`.
-`_update_preview_for(entry)` (`graphlab_app.py:946-962`) — изображение всегда
+`_update_preview_for(entry)` (`graphlab_app.py:945-961`) — изображение всегда
 вписано в доступное пространство: масштаб `min((w-20)/W, (h-20)/H, 1.0)`
 (cap 1.0 — без апскейла), центрировано; `scrollregion` не задаётся (ТЗ R10.3).
 Перерисовка по `<Configure>`. Колесико мыши над вкладкой графика реакции не
@@ -228,7 +232,7 @@ flowchart LR
 
 ### 2.6 Проекты `.gslab` и dirty-состояние
 
-**Формат** — JSON v1 (`save_project`, `graphlab_app.py:1102-1139`):
+**Формат** — JSON v1 (`save_project`, `graphlab_app.py:1101-1138`):
 
 ```json
 {
@@ -245,45 +249,45 @@ flowchart LR
 ```
 
 Пути **внутри папки проекта пишутся относительными** (функция `rel`,
-`graphlab_app.py:1107-1117`), остальные — абсолютными → проект переносим
+`graphlab_app.py:1106-1116`), остальные — абсолютными → проект переносим
 вместе с данными. Ключа `geometry` в проекте нет (R19.4). Загрузка:
-`load_project` (`graphlab_app.py:1141-1152`) →
-`load_project_from_dict` (`graphlab_app.py:1154-1163`, suppress dirty через
-`_loading`) → `_load_project_data` (`graphlab_app.py:1165-1204`).
-`_project_resolves` (`graphlab_app.py:1206-1227`) — проверка, что файлы
+`load_project` (`graphlab_app.py:1140-1151`) →
+`load_project_from_dict` (`graphlab_app.py:1153-1162`, suppress dirty через
+`_loading`) → `_load_project_data` (`graphlab_app.py:1164-1203`).
+`_project_resolves` (`graphlab_app.py:1205-1226`) — проверка, что файлы
 проекта существуют (или поля содержат сырые числа). Старые `.gslab` с
 ключами `fit_preview` и `geometry` читаются терпимо — ключи игнорируются,
 `version` остаётся 1 (R10.6, R19.4).
 
 **Dirty-трекинг**: любое пользовательское изменение (trace на переменных,
 добавление/удаление линий, выбор цвета) → `_mark_dirty`
-(`graphlab_app.py:1021-1026`) → звёздочка в заголовке. Заголовок —
-`_update_title` (`graphlab_app.py:1033-1041`): `Новый проект` / `<имя>*` +
+(`graphlab_app.py:1020-1025`) → звёздочка в заголовке. Заголовок —
+`_update_title` (`graphlab_app.py:1032-1040`): `Новый проект` / `<имя>*` +
 « — GraphLab». Подтверждение потери изменений — `_confirm_discard`
-(`graphlab_app.py:1043-1055`, askyesnocancel: Да = сохранить, Нет = продолжить,
+(`graphlab_app.py:1042-1054`, askyesnocancel: Да = сохранить, Нет = продолжить,
 Отмена = ничего). Точки входа: «Новый проект» (`_menu_new_project`,
-`graphlab_app.py:1070-1099`), «Открыть…» (`_menu_open_project`,
-`graphlab_app.py:1306-1317`), закрытие окна (`_on_close`, `graphlab_app.py:1277-1281`).
+`graphlab_app.py:1069-1098`), «Открыть…» (`_menu_open_project`,
+`graphlab_app.py:1305-1316`), закрытие окна (`_on_close`, `graphlab_app.py:1276-1280`).
 
 ### 2.7 Автосохранение и восстановление сессии
 
-- `_autosave()` (`graphlab_app.py:1230-1236`) — при закрытии окна пишет только
+- `_autosave()` (`graphlab_app.py:1229-1235`) — при закрытии окна пишет только
   `last.gslab` (полный проект); геометрию окна на диск не записывает
   (R19.4). Ошибки молча игнорируются.
-- `_restore_state()` (`graphlab_app.py:1255-1275`) — при запуске: окно
+- `_restore_state()` (`graphlab_app.py:1254-1274`) — при запуске: окно
   1450×815 по правилу запуска через `_apply_launch_geometry(None)`
   (R19.2/R19.4); `last.gslab` загружается **молча, только если пути резолвятся**
   (`_project_resolves`). После восстановления `project_path = None`,
   `_dirty = False` → состояние трактуется как «Новый проект» с данными
   (решение R1.10 из ТЗ): Ctrl+S откроет «Сохранить как…».
-- `_apply_launch_geometry(geom)` (`graphlab_app.py:1238-1253`) — правило запуска
+- `_apply_launch_geometry(geom)` (`graphlab_app.py:1237-1252`) — правило запуска
   (R19.2): окно не уже 1450 px, правый край у правого края экрана,
   вертикальное центрирование; размер клампится по экрану, неразбираемая
   геометрия → дефолт 1450×815. С диска геометрия не читается (R19.4).
 
 ### 2.8 Запуск
 
-`main()` (`graphlab_app.py:1320-1329`): HiDPI-awareness через
+`main()` (`graphlab_app.py:1319-1328`): HiDPI-awareness через
 `ctypes.windll.shcore.SetProcessDpiAwareness(1)`, `tk.Tk()`, `App(root)`,
 `root.mainloop()`. Окно всегда стартует 1450×815, minsize 1024×576; геометрия
 не сохраняется на диск и не читается с него (§2.7, R19.4).

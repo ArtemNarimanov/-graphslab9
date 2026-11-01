@@ -782,7 +782,7 @@ class App:
             for xs, ys, color, label in prepared:
                 fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
                 ax.plot(xs, ys, color=color, linewidth=2, label=label)
-                ax.set_title(f"{title} — {label}")
+                ax.set_title(title)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 _style_ax(ax)
@@ -839,11 +839,10 @@ class App:
         else:
             lines.append('os.makedirs("plots", exist_ok=True)')
             for i, (_, _, color, label) in enumerate(prepared, start=1):
-                sub_title = f"{title} — {label}"
                 lines.append(f"fig{i}, ax = plt.subplots(figsize=(9, 5), dpi=150)")
                 lines.append(f"ax.plot(x{i}, y{i}, color={self._py_str(color)}, "
                              f"linewidth=2, label={self._py_str(label)})")
-                lines.append(f"ax.set_title({self._py_str(sub_title)})")
+                lines.append(f"ax.set_title({self._py_str(title)})")
                 lines.append(f"ax.set_xlabel({self._py_str(xlabel)})")
                 lines.append(f"ax.set_ylabel({self._py_str(ylabel)})")
                 lines.extend(_style())
