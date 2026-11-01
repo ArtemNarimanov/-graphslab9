@@ -204,7 +204,7 @@ class YLine:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.geometry("2000x900")   # по умолчанию (R13.1)
+        root.geometry("1450x815")   # по умолчанию (R17.1)
         root.minsize(1024, 576)
 
         self.T = T
@@ -455,11 +455,17 @@ class App:
         left_vbar = ttk.Scrollbar(data_box, orient="vertical", command=left_canvas.yview)
         left_canvas.configure(yscrollcommand=left_vbar.set)
         left_canvas.grid(row=0, column=0, sticky="nsew")
-        left_vbar.grid(row=0, column=1, sticky="ns")
-        # R15.2: колонка бегунка постоянно занимает его ширину — canvas и
-        # карточка «Данные» не сдвигаются при появлении/скрытии vbar
+        # R18.2: зона под бегунок постоянно зарезервирована (VBAR_W + 12),
+        # сам бегунок — на 12 px внутрь от правой границы data_box; в режиме
+        # «помещается» зона остаётся пустой, canvas и карточка не сдвигаются
         VBAR_W = max(16, left_vbar.winfo_reqwidth())
-        data_box.columnconfigure(1, minsize=VBAR_W)
+        data_box.columnconfigure(1, minsize=VBAR_W + 12)
+        left_vbar.grid(row=0, column=1, sticky="ns", padx=(0, 12))
+        # R18.1: постоянная нижняя строка с кнопкой «+ Добавить линию» — не
+        # двигается при смене режима скролла и при добавлении/удалении линий
+        btn_row = tk.Frame(data_box, bg=T["card"])
+        btn_row.grid(row=1, column=0, sticky="ew")
+        self._reg(btn_row, "card")
         self.left_canvas = left_canvas
 
         inner = tk.Frame(left_canvas, bg=T["bg"])
@@ -483,11 +489,12 @@ class App:
         self.lines_frame = tk.Frame(data, bg=T["card"])
         self.lines_frame.grid(row=4, column=0, sticky="ew", padx=14)
         self._reg(self.lines_frame, "card")
-        self._btn(data, "+ Добавить линию", self.add_line).grid(
-            row=5, column=0, sticky="w", padx=14, pady=(8, 12))
+        # R18.1: кнопка — в постоянной строке внизу data_box (не в карточке)
+        self._btn(btn_row, "+ Добавить линию", self.add_line).grid(
+            row=0, column=0, sticky="w", padx=14, pady=(8, 12))
 
         # карточка «График» (статична, вне прокрутки — TZ fix 1)
-        graph = self._card(left, "График", row=1, padx=(0, VBAR_W))   # R15.3: правый край у края «Данных»
+        graph = self._card(left, "График", row=1, padx=(0, VBAR_W + 12))   # R18.3: правый край у края «Данных»
         self._field_row(graph, "Название графика", self.title_var, row=1)
         self._field_row(graph, "Подпись оси X", self.xlabel_var, row=3)
         self._field_row(graph, "Подпись оси Y", self.ylabel_var, row=5)
@@ -510,7 +517,7 @@ class App:
         self.combined_entry.grid(row=0, column=1, sticky="ew")
 
         # карточка «Вывод» (статична, вне прокрутки — TZ fix 1)
-        out = self._card(left, "Вывод", row=2, padx=(0, VBAR_W))   # R15.3: правый край у края «Данных»
+        out = self._card(left, "Вывод", row=2, padx=(0, VBAR_W + 12))   # R18.3: правый край у края «Данных»
         self._field_row(out, "Папка для PNG", self.out_dir, row=1,
                         pick_cmd=self._pick_dir)
         self._muted_label(
@@ -620,7 +627,7 @@ class App:
             canvas.configure(scrollregion="")
         else:
             # переполнение — естественная высота, скролл внутри бокса (R12.3)
-            vbar.grid(row=0, column=1, sticky="ns")
+            vbar.grid(row=0, column=1, sticky="ns", padx=(0, 12))   # R18.2
             canvas.itemconfigure(win_id, height=0)
             canvas.configure(scrollregion=canvas.bbox("all"))
 
@@ -1232,17 +1239,17 @@ class App:
             pass
 
     def _apply_launch_geometry(self, geom: str | None):
-        """Правило запуска окна (R16.1): не уже 2000 px, правый край у правого
-        края экрана, по вертикали центрировано. `geom` — сохранённая строка
-        вида "WxH+X+Y"; непарсимая/отсутствующая — дефолты 2000×900."""
-        w, h = 2000, 900
+        """Правило запуска окна (R16.1, R17.2): не уже 1450 px, правый край у
+        правого края экрана, по вертикали центрировано. `geom` — сохранённая
+        строка вида "WxH+X+Y"; непарсимая/отсутствующая — дефолты 1450×815."""
+        w, h = 1450, 815
         if geom:
             m = re.match(r"\s*(\d+)x(\d+)", str(geom))
             if m:
                 w, h = int(m.group(1)), int(m.group(2))
         screenw = self.root.winfo_screenwidth()
         screenh = self.root.winfo_screenheight()
-        w = min(max(w, 2000), screenw)
+        w = min(max(w, 1450), screenw)
         h = min(h, screenh)
         x = screenw - w
         y = max(0, (screenh - h) // 2)
@@ -1276,13 +1283,11 @@ class App:
                     last_geom = data.get("geometry")
             except Exception:
                 pass
-        # R16.2: при запуске обе сохранённые геометрии (last.gslab, затем
-        # config.json) применяются через правило запуска — не уже 2000 px,
-        # правый край у правого края экрана, по вертикали центрировано
-        if loaded:
-            self._apply_launch_geometry(last_geom or geom)
-        elif geom:
-            self._apply_launch_geometry(geom)
+        # R16.2/R17: при запуске геометрия (из last.gslab, затем config.json,
+        # иначе дефолт 1450×815) применяется через правило запуска — не уже
+        # 1450 px, правый край у правого края экрана, по вертикали центрировано;
+        # чистый старт без сохранённой геометрии тоже идёт через правило (R17)
+        self._apply_launch_geometry(last_geom or geom)
 
         # после восстановления — «Новый проект» с данными (без привязки к файлу)
         self.project_path = None
