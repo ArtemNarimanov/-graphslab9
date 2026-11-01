@@ -87,6 +87,19 @@ GUI показывает окно Python-кода, CLI печатает стро
 
 ## Сборка из исходника
 
+### 1. Иконка (уже в репозитории)
+
+`make_icon.py` генерирует `GraphLab.ico` (Pillow, есть в venv):
+
+```
+env\Scripts\python.exe make_icon.py
+```
+
+Иконка зашита в exe через `icon='GraphLab.ico'` в спеке и используется
+установщиком.
+
+### 2. Портативная версия (onedir)
+
 `graphlab_app.py` — onedir, спецификация `GraphLab_onedir.spec`:
 
 ```
@@ -95,6 +108,23 @@ env\Scripts\pyinstaller.exe GraphLab_onedir.spec --noconfirm
 
 Результат — папка `dist\GraphLab\` (`GraphLab.exe` + `_internal\`), её и
 раздавать/запускать. Временные папки при запуске не создаются.
+
+### 3. Установщик (Inno Setup)
+
+`installer.iss` упаковывает onedir-бандл в setup-файл:
+
+```
+"C:\Program Files\Inno Setup 7\ISCC.exe" installer.iss
+```
+
+(если Inno Setup не установлен — поставить из `tools\innosetup-7.1.1-x64.exe`).
+
+Результат — `out\GraphLab-Setup-1.0.5.exe`: русский мастер, установка в
+Program Files (x64), опциональный ярлык на рабочем столе, запуск после
+установки; данные пользователя (`%APPDATA%\GraphLab`) при удалении не трогаются.
+
+Артефакты сборки (`dist/`, `build/`, `out/`) — в gitignore, в репозиторий
+не попадают.
 
 ## CLI-скрипт
 
