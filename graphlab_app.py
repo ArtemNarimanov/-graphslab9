@@ -53,7 +53,7 @@ def app_dir() -> str:
 
 
 def user_dir() -> str:
-    """Папка %APPDATA%/GraphLab для config.json и last.gslab."""
+    """Папка %APPDATA%/GraphLab для last.gslab (автосохранение проекта)."""
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
     d = os.path.join(base, "GraphLab")
     os.makedirs(d, exist_ok=True)
@@ -237,12 +237,8 @@ class App:
         self._build_menu()
         self._build_ui()
         self.add_line()
-        # R16.2: при запуске геометрия — только через правило запуска
-        self._launching = True
-        try:
-            self._restore_state()
-        finally:
-            self._launching = False
+        # R19.4: геометрию с диска не читаем — окно всегда 1450×815 по правилу запуска
+        self._restore_state()
 
     # ---------- вспомогательное создание виджетов ----------
     def _reg(self, w, role="field"):
@@ -401,14 +397,14 @@ class App:
 
     # ---------- построение интерфейса ----------
     def _card(self, parent, title: str, row: int, stretch: bool = False,
-              padx=(0, 0)):
+              padx=(0, 0), pady=(0, 10)):
         """Карточка-секция с заголовком; возвращает её frame."""
         card = tk.Frame(parent, bg=self.T["card"])
         if stretch:
-            card.grid(row=row, column=0, sticky="nsew", pady=(0, 10), padx=padx)
+            card.grid(row=row, column=0, sticky="nsew", pady=pady, padx=padx)
             parent.rowconfigure(row, weight=1)
         else:
-            card.grid(row=row, column=0, sticky="ew", pady=(0, 10), padx=padx)
+            card.grid(row=row, column=0, sticky="ew", pady=pady, padx=padx)
         card.columnconfigure(0, weight=1)
         self._reg(card, "card")
         self._muted_label(card, title.upper()).grid(
@@ -446,21 +442,32 @@ class App:
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
 
-        # canvas + вертикальный бегунок вокруг карточки «Данные» (R6)
+        # R19.1: карточка «Данные» — постоянная рамка бокса: создаётся напрямую
+        # в data_box (row 0, sticky nsew, без pady снизу) и занимает всю высоту
+        # row 0 — от верхнего края data_box до верхней кромки btn_row; нижний
+        # край одинаков в обоих режимах скролла
         data_box = tk.Frame(left, bg=T["bg"])
         data_box.grid(row=0, column=0, sticky="nsew")
         data_box.columnconfigure(0, weight=1)
-        data_box.rowconfigure(0, weight=1)   # R11.1: canvas заполняет data_box по вертикали
-        left_canvas = tk.Canvas(data_box, bg=T["bg"], highlightthickness=0)
-        left_vbar = ttk.Scrollbar(data_box, orient="vertical", command=left_canvas.yview)
+        data_box.rowconfigure(0, weight=1)   # R11.1: карточка заполняет data_box по вертикали
+        data = self._card(data_box, "Данные", row=0, stretch=True, pady=(0, 0))
+        # R19.2: внутри карточки — двухуровневая раскладка: row 0 — заголовок
+        # (создан _card), row 1 — прокручиваемая область: canvas + vbar
+        data.rowconfigure(1, weight=1)
+        left_canvas = tk.Canvas(data, bg=T["card"], highlightthickness=0)
+        left_vbar = ttk.Scrollbar(data, orient="vertical", command=left_canvas.yview)
         left_canvas.configure(yscrollcommand=left_vbar.set)
-        left_canvas.grid(row=0, column=0, sticky="nsew")
-        # R18.2: зона под бегунок постоянно зарезервирована (VBAR_W + 12),
-        # сам бегунок — на 12 px внутрь от правой границы data_box; в режиме
-        # «помещается» зона остаётся пустой, canvas и карточка не сдвигаются
+        left_canvas.grid(row=1, column=0, sticky="nsew")
+        # R19.3: зона под бегунок зарезервирована внутри карточки (VBAR_W + 12),
+        # сам бегунок — на 12 px внутрь от правого края карточки; в режиме
+        # «помещается» vbar скрыт, зона остаётся пустой, canvas не сдвигается
         VBAR_W = max(16, left_vbar.winfo_reqwidth())
-        data_box.columnconfigure(1, minsize=VBAR_W + 12)
-        left_vbar.grid(row=0, column=1, sticky="ns", padx=(0, 12))
+        data.columnconfigure(1, minsize=VBAR_W + 12)
+        left_vbar.grid(row=1, column=1, sticky="ns", padx=(0, 12))
+        # R19.3: правый край карточки = правый край data_box; выравнивание с
+        # «ГРАФИК»/«ВЫВОД» (padx=(0, VBAR_W + 12), R18.3) сохраняется — зона
+        # VBAR_W + 12 вырезается из ширины data_box
+        data_box.grid_configure(padx=(0, VBAR_W + 12))
         # R18.1: постоянная нижняя строка с кнопкой «+ Добавить линию» — не
         # двигается при смене режима скролла и при добавлении/удалении линий
         btn_row = tk.Frame(data_box, bg=T["card"])
@@ -468,25 +475,25 @@ class App:
         self._reg(btn_row, "card")
         self.left_canvas = left_canvas
 
-        inner = tk.Frame(left_canvas, bg=T["bg"])
-        inner.columnconfigure(0, weight=1)   # карточка на всю ширину (R9.1)
+        # R19.2: окно canvas содержит только содержимое — без обёртки-карточки
+        inner = tk.Frame(left_canvas, bg=T["card"])
+        inner.columnconfigure(0, weight=1)   # содержимое на всю ширину (R9.1)
         win_id = left_canvas.create_window(0, 0, anchor="nw", window=inner)
         self._left_inner = inner
         self._left_win_id = win_id
         self._left_vbar = left_vbar
         self._left_scroll_mode = None   # R14.3: «fits»/«overflow» — сброс позиции при смене
 
-        # автоизмерение: scrollregion, ширина/высота карточки, автоскрытие бегунка (R12)
+        # автоизмерение: scrollregion, ширина/высота содержимого, автоскрытие бегунка (R12)
         inner.bind("<Configure>", lambda e: self._update_left_scroll(e))
         left_canvas.bind("<Configure>", lambda e: self._update_left_scroll(e))
 
-        # карточка «Данные» (растягивается до низа панели — R9.2)
-        data = self._card(inner, "Данные", row=0, stretch=True)
-        self._field_row(data, "Файл X (ось абсцисс)", self.x_file, row=1,
+        # содержимое карточки «Данные» (R19.2): поле X, подпись «Линии Y», строки
+        self._field_row(inner, "Файл X (ось абсцисс)", self.x_file, row=1,
                         pick_cmd=self._pick_x)
 
-        self._muted_label(data, "Линии Y").grid(row=3, column=0, sticky="w", padx=14, pady=(12, 2))
-        self.lines_frame = tk.Frame(data, bg=T["card"])
+        self._muted_label(inner, "Линии Y").grid(row=3, column=0, sticky="w", padx=14, pady=(12, 2))
+        self.lines_frame = tk.Frame(inner, bg=T["card"])
         self.lines_frame.grid(row=4, column=0, sticky="ew", padx=14)
         self._reg(self.lines_frame, "card")
         # R18.1: кнопка — в постоянной строке внизу data_box (не в карточке)
@@ -620,14 +627,14 @@ class App:
             canvas.yview_moveto(0.0)
 
         if mode == "fits":
-            # контент помещается — карточка на всю высоту панели (R9.3, R12.3);
+            # контент помещается — содержимое заполняет карточку до низа (R9.3, R12.3);
             # scroll-диапазон отсутствует полностью (R14.3)
             vbar.grid_remove()
             canvas.itemconfigure(win_id, height=view_h)
             canvas.configure(scrollregion="")
         else:
-            # переполнение — естественная высота, скролл внутри бокса (R12.3)
-            vbar.grid(row=0, column=1, sticky="ns", padx=(0, 12))   # R18.2
+            # переполнение — естественная высота, скролл внутри карточки (R12.3, R19.3)
+            vbar.grid(row=1, column=1, sticky="ns", padx=(0, 12))   # R18.2/R19.3
             canvas.itemconfigure(win_id, height=0)
             canvas.configure(scrollregion=canvas.bbox("all"))
 
@@ -1127,7 +1134,6 @@ class App:
             "combined": bool(self.combined.get()),
             "combined_name": self.combined_name.get(),
             "out_dir": rel(self.out_dir.get().strip()),
-            "geometry": self.root.geometry(),
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1194,14 +1200,7 @@ class App:
         self.combined_name.set(data.get("combined_name", "combined"))
         od = resolve(data.get("out_dir", ""))
         self.out_dir.set(od or app_dir())
-        geom = data.get("geometry")
-        # R16.2: при запуске геометрию применяет _restore_state через правило
-        # запуска; здесь (Ctrl+O в середине сессии) — как есть, без перескока
-        if geom and not self._launching:
-            try:
-                self.root.geometry(geom)
-            except tk.TclError:
-                pass
+        # R19.4: ключ "geometry" не применяем — старые проекты читаются терпимо
         self._toggle_combined()
 
     def _project_resolves(self, data, base_dir):
@@ -1229,19 +1228,17 @@ class App:
 
     # ---------- автосохранение / восстановление ----------
     def _autosave(self):
+        """При закрытии: автосохранить последний проект (R19.4: геометрию окна
+        на диск не записываем)."""
         try:
-            d = user_dir()
-            with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
-                json.dump({"geometry": self.root.geometry()},
-                          f, ensure_ascii=False, indent=2)
-            self.save_project(os.path.join(d, "last.gslab"))
+            self.save_project(os.path.join(user_dir(), "last.gslab"))
         except Exception:
             pass
 
     def _apply_launch_geometry(self, geom: str | None):
-        """Правило запуска окна (R16.1, R17.2): не уже 1450 px, правый край у
-        правого края экрана, по вертикали центрировано. `geom` — сохранённая
-        строка вида "WxH+X+Y"; непарсимая/отсутствующая — дефолты 1450×815."""
+        """Правило запуска окна (R19.2): не уже 1450 px, правый край у
+        правого края экрана, по вертикали центрировано. `geom` — строка вида
+        "WxH+X+Y"; непарсимая/отсутствующая — дефолты 1450×815."""
         w, h = 1450, 815
         if geom:
             m = re.match(r"\s*(\d+)x(\d+)", str(geom))
@@ -1256,22 +1253,12 @@ class App:
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _restore_state(self):
-        """При запуске: last.gslab — молча, если пути резолвятся; геометрия
-        (из last.gslab или config.json) — через правило запуска (R16.2)."""
-        d = user_dir()
-        geom = None
-        cfg_path = os.path.join(d, "config.json")
-        if os.path.isfile(cfg_path):
-            try:
-                with open(cfg_path, encoding="utf-8") as f:
-                    cfg = json.load(f)
-                geom = cfg.get("geometry")
-            except Exception:
-                pass
+        """При запуске: окно — 1450×815 по правилу запуска (R19.2/R19.4);
+        проект — из last.gslab молча, только если пути резолвятся."""
+        self._apply_launch_geometry(None)   # R19.4: геометрию с диска не читаем
 
+        d = user_dir()
         last = os.path.join(d, "last.gslab")
-        loaded = False
-        last_geom = None
         if os.path.isfile(last):
             try:
                 with open(last, encoding="utf-8") as f:
@@ -1279,15 +1266,8 @@ class App:
                 base_dir = os.path.dirname(os.path.abspath(last))
                 if self._project_resolves(data, base_dir):
                     self.load_project_from_dict(data, base_dir)
-                    loaded = True
-                    last_geom = data.get("geometry")
             except Exception:
                 pass
-        # R16.2/R17: при запуске геометрия (из last.gslab, затем config.json,
-        # иначе дефолт 1450×815) применяется через правило запуска — не уже
-        # 1450 px, правый край у правого края экрана, по вертикали центрировано;
-        # чистый старт без сохранённой геометрии тоже идёт через правило (R17)
-        self._apply_launch_geometry(last_geom or geom)
 
         # после восстановления — «Новый проект» с данными (без привязки к файлу)
         self.project_path = None
