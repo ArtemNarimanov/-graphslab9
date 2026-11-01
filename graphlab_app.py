@@ -237,7 +237,12 @@ class App:
         self._build_menu()
         self._build_ui()
         self.add_line()
-        self._restore_state()
+        # R16.2: при запуске геометрия — только через правило запуска
+        self._launching = True
+        try:
+            self._restore_state()
+        finally:
+            self._launching = False
 
     # ---------- вспомогательное создание виджетов ----------
     def _reg(self, w, role="field"):
@@ -395,14 +400,15 @@ class App:
             self._ctx_target.event_generate(ev)
 
     # ---------- построение интерфейса ----------
-    def _card(self, parent, title: str, row: int, stretch: bool = False):
+    def _card(self, parent, title: str, row: int, stretch: bool = False,
+              padx=(0, 0)):
         """Карточка-секция с заголовком; возвращает её frame."""
         card = tk.Frame(parent, bg=self.T["card"])
         if stretch:
-            card.grid(row=row, column=0, sticky="nsew", pady=(0, 10))
+            card.grid(row=row, column=0, sticky="nsew", pady=(0, 10), padx=padx)
             parent.rowconfigure(row, weight=1)
         else:
-            card.grid(row=row, column=0, sticky="ew", pady=(0, 10))
+            card.grid(row=row, column=0, sticky="ew", pady=(0, 10), padx=padx)
         card.columnconfigure(0, weight=1)
         self._reg(card, "card")
         self._muted_label(card, title.upper()).grid(
@@ -434,7 +440,7 @@ class App:
 
         # ---------- левая панель: настройки ----------
         left = tk.Frame(root, bg=T["bg"])
-        left.grid(row=0, column=0, sticky="ns", padx=(12, 6), pady=12)
+        left.grid(row=0, column=0, sticky="ns", padx=(12, 18), pady=12)   # R15.1: зазор между панелями 24 px
         self.left = left
         # прокручивается только «Данные»; «График» и «Вывод» статичны (TZ fix 1)
         left.columnconfigure(0, weight=1)
@@ -450,6 +456,10 @@ class App:
         left_canvas.configure(yscrollcommand=left_vbar.set)
         left_canvas.grid(row=0, column=0, sticky="nsew")
         left_vbar.grid(row=0, column=1, sticky="ns")
+        # R15.2: колонка бегунка постоянно занимает его ширину — canvas и
+        # карточка «Данные» не сдвигаются при появлении/скрытии vbar
+        VBAR_W = max(16, left_vbar.winfo_reqwidth())
+        data_box.columnconfigure(1, minsize=VBAR_W)
         self.left_canvas = left_canvas
 
         inner = tk.Frame(left_canvas, bg=T["bg"])
@@ -477,7 +487,7 @@ class App:
             row=5, column=0, sticky="w", padx=14, pady=(8, 12))
 
         # карточка «График» (статична, вне прокрутки — TZ fix 1)
-        graph = self._card(left, "График", row=1)
+        graph = self._card(left, "График", row=1, padx=(0, VBAR_W))   # R15.3: правый край у края «Данных»
         self._field_row(graph, "Название графика", self.title_var, row=1)
         self._field_row(graph, "Подпись оси X", self.xlabel_var, row=3)
         self._field_row(graph, "Подпись оси Y", self.ylabel_var, row=5)
@@ -500,7 +510,7 @@ class App:
         self.combined_entry.grid(row=0, column=1, sticky="ew")
 
         # карточка «Вывод» (статична, вне прокрутки — TZ fix 1)
-        out = self._card(left, "Вывод", row=2)
+        out = self._card(left, "Вывод", row=2, padx=(0, VBAR_W))   # R15.3: правый край у края «Данных»
         self._field_row(out, "Папка для PNG", self.out_dir, row=1,
                         pick_cmd=self._pick_dir)
         self._muted_label(
@@ -1178,7 +1188,9 @@ class App:
         od = resolve(data.get("out_dir", ""))
         self.out_dir.set(od or app_dir())
         geom = data.get("geometry")
-        if geom:
+        # R16.2: при запуске геометрию применяет _restore_state через правило
+        # запуска; здесь (Ctrl+O в середине сессии) — как есть, без перескока
+        if geom and not self._launching:
             try:
                 self.root.geometry(geom)
             except tk.TclError:
@@ -1219,9 +1231,26 @@ class App:
         except Exception:
             pass
 
+    def _apply_launch_geometry(self, geom: str | None):
+        """Правило запуска окна (R16.1): не уже 2000 px, правый край у правого
+        края экрана, по вертикали центрировано. `geom` — сохранённая строка
+        вида "WxH+X+Y"; непарсимая/отсутствующая — дефолты 2000×900."""
+        w, h = 2000, 900
+        if geom:
+            m = re.match(r"\s*(\d+)x(\d+)", str(geom))
+            if m:
+                w, h = int(m.group(1)), int(m.group(2))
+        screenw = self.root.winfo_screenwidth()
+        screenh = self.root.winfo_screenheight()
+        w = min(max(w, 2000), screenw)
+        h = min(h, screenh)
+        x = screenw - w
+        y = max(0, (screenh - h) // 2)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
     def _restore_state(self):
-        """При запуске: геометрия из config.json; last.gslab — молча,
-        если пути резолвятся."""
+        """При запуске: last.gslab — молча, если пути резолвятся; геометрия
+        (из last.gslab или config.json) — через правило запуска (R16.2)."""
         d = user_dir()
         geom = None
         cfg_path = os.path.join(d, "config.json")
@@ -1235,6 +1264,7 @@ class App:
 
         last = os.path.join(d, "last.gslab")
         loaded = False
+        last_geom = None
         if os.path.isfile(last):
             try:
                 with open(last, encoding="utf-8") as f:
@@ -1243,13 +1273,16 @@ class App:
                 if self._project_resolves(data, base_dir):
                     self.load_project_from_dict(data, base_dir)
                     loaded = True
+                    last_geom = data.get("geometry")
             except Exception:
                 pass
-        if not loaded and geom:
-            try:
-                self.root.geometry(geom)
-            except tk.TclError:
-                pass
+        # R16.2: при запуске обе сохранённые геометрии (last.gslab, затем
+        # config.json) применяются через правило запуска — не уже 2000 px,
+        # правый край у правого края экрана, по вертикали центрировано
+        if loaded:
+            self._apply_launch_geometry(last_geom or geom)
+        elif geom:
+            self._apply_launch_geometry(geom)
 
         # после восстановления — «Новый проект» с данными (без привязки к файлу)
         self.project_path = None
