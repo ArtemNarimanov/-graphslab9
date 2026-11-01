@@ -23,6 +23,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='GraphLab',
+    icon='GraphLab.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
