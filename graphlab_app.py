@@ -197,7 +197,8 @@ class YLine:
         self.frame.destroy()
         self.app.lines.remove(self)
         self.app._mark_dirty()
-        self.app._update_left_scroll()   # R12.2: пересчёт переполнения после удаления
+        # R14.2: отложенный пересчёт — winfo_reqheight читается по готовой геометрии
+        self.app.left_canvas.after(0, self.app._update_left_scroll)
 
 
 class App:
@@ -457,6 +458,7 @@ class App:
         self._left_inner = inner
         self._left_win_id = win_id
         self._left_vbar = left_vbar
+        self._left_scroll_mode = None   # R14.3: «fits»/«overflow» — сброс позиции при смене
 
         # автоизмерение: scrollregion, ширина/высота карточки, автоскрытие бегунка (R12)
         inner.bind("<Configure>", lambda e: self._update_left_scroll(e))
@@ -569,11 +571,16 @@ class App:
         root.bind_all("<MouseWheel>", self._on_mousewheel)
 
     # ---------- действия ----------
-    def _update_left_scroll(self, e=None):
-        """Обновляет состояние скролла в боксе «Данные» (R12).
+    def _update_left_scroll(self, e=None, _retry=False):
+        """Обновляет состояние скролла в боксе «Данные» (R12, R14).
 
-        Вызывается из <Configure> canvas/inner и явно после add_line/_remove.
-        Детект переполнения — по естественной высоте inner (R12.1).
+        Вызывается из <Configure> canvas/inner и отложенно (after(0)) после
+        add_line/_remove (R14.2). Детект переполнения — по естественной высоте
+        inner (R12.1); перед измерением update_idletasks() доводит геометрию
+        строк до готовности. Все три величины состояния (видимость vbar,
+        высота item, scrollregion) выставляются атомарно за один проход по
+        одному вычисленному режиму (R14.1); после выставления проверяется
+        согласованность, при несовпадении — один повтор через after(0).
         """
         canvas = self.left_canvas
         win_id = self._left_win_id
@@ -583,12 +590,21 @@ class App:
         # карточка на всю ширину панели (R6.2)
         canvas.itemconfigure(win_id, width=canvas.winfo_width())
 
-        # естественная высота контента (R12.1) — не bbox прижатого inner
+        # естественная высота контента (R12.1) — не bbox прижатого inner;
+        # update_idletasks до чтения: after(0) может сработать до того, как Tk
+        # просчитает геометрию новых/удалённых строк (риск R14)
+        inner.update_idletasks()
         content_h = inner.winfo_reqheight()
         view_h = canvas.winfo_height()
+        mode = "fits" if content_h <= view_h else "overflow"
 
-        if content_h <= view_h:
-            # контент помещается — карточка на всю высоту панели (R9.3, R12.3)
+        # R14.3: переход «переполнение» → «помещается» — сброс позиции прокрутки
+        if self._left_scroll_mode == "overflow" and mode == "fits":
+            canvas.yview_moveto(0.0)
+
+        if mode == "fits":
+            # контент помещается — карточка на всю высоту панели (R9.3, R12.3);
+            # scroll-диапазон отсутствует полностью (R14.3)
             vbar.grid_remove()
             canvas.itemconfigure(win_id, height=view_h)
             canvas.configure(scrollregion="")
@@ -598,12 +614,25 @@ class App:
             canvas.itemconfigure(win_id, height=0)
             canvas.configure(scrollregion=canvas.bbox("all"))
 
+        self._left_scroll_mode = mode
+
+        # R14.1: контроль согласованности — не более одного повтора через after(0)
+        if mode == "fits" and not _retry:
+            try:
+                ok = (str(canvas.cget("scrollregion")) in ("", "0 0 0 0")
+                      and tuple(canvas.yview()) == (0.0, 1.0))
+            except tk.TclError:
+                ok = False
+            if not ok:
+                canvas.after(0, lambda: self._update_left_scroll(_retry=True))
+
     def add_line(self):
         idx = self._line_counter
         self._line_counter += 1
         self.lines.append(YLine(self.lines_frame, self, idx))
         self._mark_dirty()
-        self._update_left_scroll()   # R12.2: пересчёт переполнения после добавления
+        # R14.2: отложенный пересчёт — winfo_reqheight читается по готовой геометрии
+        self.left_canvas.after(0, self._update_left_scroll)
 
     def _toggle_combined(self):
         """Включает/выключает поле имени объединённого графика."""
@@ -915,7 +944,8 @@ class App:
         Область определяется по цепочке master виджета под указателем;
         обработанное событие возвращает "break". Направление: колесо вниз →
         вниз, вверх → вверх (TZ fix 2). Над вкладками предпросмотра реакции нет —
-        изображения всегда вписаны (R10.5).
+        изображения всегда вписаны (R10.5). Над боксом «Данные» прокрутка только
+        при реальном переполнении (страж R14.4).
         """
         w = self.root.winfo_containing(e.x_root, e.y_root)
         if w is None:
@@ -937,6 +967,12 @@ class App:
         delta = e.delta
         if delta == 0:
             return "break"
+        # R14.4: страж для зоны «Данные» — прокрутка только если диапазон
+        # реально существует (высота bbox("all") больше высоты canvas)
+        if target is self.left_canvas:
+            bb = target.bbox("all")
+            if bb is None or (bb[3] - bb[1]) <= target.winfo_height():
+                return "break"
         steps = -delta // 120 if abs(delta) >= 120 else (-1 if delta > 0 else 1)
         target.yview_scroll(steps, "units")
         return "break"
