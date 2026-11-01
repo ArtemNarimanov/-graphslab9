@@ -197,12 +197,13 @@ class YLine:
         self.frame.destroy()
         self.app.lines.remove(self)
         self.app._mark_dirty()
+        self.app._update_left_scroll()   # R12.2: пересчёт переполнения после удаления
 
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.geometry("1600x900")   # по умолчанию 16:9 (R10.1)
+        root.geometry("2000x900")   # по умолчанию (R13.1)
         root.minsize(1024, 576)
 
         self.T = T
@@ -442,6 +443,7 @@ class App:
         data_box = tk.Frame(left, bg=T["bg"])
         data_box.grid(row=0, column=0, sticky="nsew")
         data_box.columnconfigure(0, weight=1)
+        data_box.rowconfigure(0, weight=1)   # R11.1: canvas заполняет data_box по вертикали
         left_canvas = tk.Canvas(data_box, bg=T["bg"], highlightthickness=0)
         left_vbar = ttk.Scrollbar(data_box, orient="vertical", command=left_canvas.yview)
         left_canvas.configure(yscrollcommand=left_vbar.set)
@@ -452,26 +454,13 @@ class App:
         inner = tk.Frame(left_canvas, bg=T["bg"])
         inner.columnconfigure(0, weight=1)   # карточка на всю ширину (R9.1)
         win_id = left_canvas.create_window(0, 0, anchor="nw", window=inner)
+        self._left_inner = inner
+        self._left_win_id = win_id
+        self._left_vbar = left_vbar
 
-        # автоизмерение: scrollregion, ширина/высота карточки, автоскрытие бегунка
-        def _left_scroll_state(e):
-            if e.widget is inner:
-                left_canvas.configure(scrollregion=left_canvas.bbox("all"))
-            else:  # canvas — карточка на всю ширину панели (R6.2)
-                left_canvas.itemconfigure(win_id, width=e.widget.winfo_width())
-            bbox = left_canvas.bbox("all")
-            content_h = bbox[3] if bbox else 0
-            view_h = left_canvas.winfo_height()
-            if content_h <= view_h:
-                # контент помещается — карточка на всю высоту панели (R9.3)
-                left_vbar.grid_remove()
-                left_canvas.itemconfigure(win_id, height=view_h)
-            else:  # переполнение — естественная высота (R9.3)
-                left_vbar.grid(row=0, column=1, sticky="ns")
-                left_canvas.itemconfigure(win_id, height=0)
-
-        inner.bind("<Configure>", _left_scroll_state)
-        left_canvas.bind("<Configure>", _left_scroll_state)
+        # автоизмерение: scrollregion, ширина/высота карточки, автоскрытие бегунка (R12)
+        inner.bind("<Configure>", lambda e: self._update_left_scroll(e))
+        left_canvas.bind("<Configure>", lambda e: self._update_left_scroll(e))
 
         # карточка «Данные» (растягивается до низа панели — R9.2)
         data = self._card(inner, "Данные", row=0, stretch=True)
@@ -580,11 +569,41 @@ class App:
         root.bind_all("<MouseWheel>", self._on_mousewheel)
 
     # ---------- действия ----------
+    def _update_left_scroll(self, e=None):
+        """Обновляет состояние скролла в боксе «Данные» (R12).
+
+        Вызывается из <Configure> canvas/inner и явно после add_line/_remove.
+        Детект переполнения — по естественной высоте inner (R12.1).
+        """
+        canvas = self.left_canvas
+        win_id = self._left_win_id
+        inner = self._left_inner
+        vbar = self._left_vbar
+
+        # карточка на всю ширину панели (R6.2)
+        canvas.itemconfigure(win_id, width=canvas.winfo_width())
+
+        # естественная высота контента (R12.1) — не bbox прижатого inner
+        content_h = inner.winfo_reqheight()
+        view_h = canvas.winfo_height()
+
+        if content_h <= view_h:
+            # контент помещается — карточка на всю высоту панели (R9.3, R12.3)
+            vbar.grid_remove()
+            canvas.itemconfigure(win_id, height=view_h)
+            canvas.configure(scrollregion="")
+        else:
+            # переполнение — естественная высота, скролл внутри бокса (R12.3)
+            vbar.grid(row=0, column=1, sticky="ns")
+            canvas.itemconfigure(win_id, height=0)
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
     def add_line(self):
         idx = self._line_counter
         self._line_counter += 1
         self.lines.append(YLine(self.lines_frame, self, idx))
         self._mark_dirty()
+        self._update_left_scroll()   # R12.2: пересчёт переполнения после добавления
 
     def _toggle_combined(self):
         """Включает/выключает поле имени объединённого графика."""
